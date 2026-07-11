@@ -1,4 +1,4 @@
-# Pull skull boundary voxels out of an MRI (shell only, not the full volume)
+# skull boundary stuff — just the outer shell, not the whole volume inside
 import numpy as np
 
 
@@ -8,11 +8,21 @@ def extract_skull_boundary(volume, affine=None, voxel_size_mm=None):
     We only care about the boundary layer, not everything inside the skull.
     """
 
-    # figure out voxel size if we weren't given it (can pull from affine later)
-    # classify which voxels are actually head vs air/background
-    # peel off just the outer shell (drop the interior)
-    # return a boolean mask, True = on the boundary
-    pass
+    # need the full head mask first, then we shave off everything but the surface
+    head_mask = classify_head_voxels(volume, affine=affine, voxel_size_mm=voxel_size_mm)
+
+    # shrink the mask inward — anything left after this is deep inside the head
+    interior = head_mask.copy()
+    interior[1:, :, :] &= head_mask[:-1, :, :]
+    interior[:-1, :, :] &= head_mask[1:, :, :]
+    interior[:, 1:, :] &= head_mask[:, :-1, :]
+    interior[:, :-1, :] &= head_mask[:, 1:, :]
+    interior[:, :, 1:] &= head_mask[:, :, :-1]
+    interior[:, :, :-1] &= head_mask[:, :, 1:]
+
+    # whatever's head but not interior = the boundary layer we actually want
+    boundary_mask = head_mask & ~interior
+    return boundary_mask
 
 
 def classify_head_voxels(volume, affine=None, voxel_size_mm=None):
@@ -21,8 +31,21 @@ def classify_head_voxels(volume, affine=None, voxel_size_mm=None):
     Returns a boolean mask: True means head tissue, False means outside.
     """
 
-    # strip out obvious background (empty/air voxels around the scan)
-    # threshold or segment the volume to separate head from non-head
-    # clean up the mask a bit (fill holes, remove noise blobs)
-    # return head_mask
+    # toss the empty air voxels around the edges of the scan
+    # figure out some threshold to split head tissue from background
+    # probably need to clean up noise / fill little holes after that
+    # then return head_mask
+    pass
+
+
+def load_mri_volume(path):
+    """
+    Load a 3D MRI scan from disk (expects a NIfTI file).
+    Returns the volume array plus the affine so we know voxel spacing/orientation.
+    """
+
+    # use nibabel to open the nifti
+    # grab the 3d array + the 4x4 affine
+    # might pull voxel size from the affine if we need it
+    # return volume, affine
     pass
