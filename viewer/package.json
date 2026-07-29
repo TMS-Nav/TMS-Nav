@@ -1,0 +1,15 @@
+{
+  "name": "tms-nav-viewer",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "parcel src/index.html -p 1234",
+    "build": "parcel build src/index.html --public-url ./"
+  },
+  "dependencies": {
+    "three": "^0.182.0"
+  },
+  "devDependencies": {
+    "parcel": "^2.16.3"
+  }
+}

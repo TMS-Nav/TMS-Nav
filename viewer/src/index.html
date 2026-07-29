@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TMS-Nav viewer</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+
+    <div id="ui">
+      <h1>TMS-Nav</h1>
+      <div class="subject">subject: <span id="subject">...</span></div>
+
+      <fieldset>
+        <legend>layers</legend>
+        <label><input type="checkbox" id="toggle-scalp" checked /> scalp</label>
+        <label><input type="checkbox" id="toggle-targets" checked /> targets</label>
+        <label><input type="checkbox" id="toggle-coil" checked /> coil</label>
+      </fieldset>
+
+      <div class="row">
+        <label for="opacity">scalp opacity</label>
+        <input type="range" id="opacity" min="0" max="100" value="85" />
+      </div>
+
+      <div class="hint">click a target for its numbers</div>
+    </div>
+
+    <div id="info" class="hidden"></div>
+
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

@@ -8,6 +8,7 @@ import numpy as np
 import pyvista as pv
 
 from src.coil_model import place_coil
+from src.export_web import export_web
 from src.head_surface import scalp_surface
 from src.scene import Scene
 from src.skull_boundary import load_mri_volume
@@ -16,6 +17,9 @@ from src.viz import render_view
 
 SAVE_DIR = Path("saves")
 PREVIEW_DIR = SAVE_DIR / "previews"
+
+# three.js viewer reads its data from here, one folder per subject
+VIEWER_DATA_DIR = Path("viewer") / "src" / "data"
 
 GAP_MM = 2.0
 
@@ -45,7 +49,12 @@ def build_scene(mri_path):
     targets = standard_targets(scalp)
     coil = place_coil(scalp, COIL_AIM, gap=GAP_MM)
 
-    return Scene(name=Path(mri_path).name.split(".")[0], scalp=scalp, targets=targets, coil=coil)
+    return Scene(
+        name=Path(mri_path).name.split(".")[0],
+        scalp=scalp,
+        targets=targets,
+        coil=coil,
+    )
 
 
 def main():
@@ -82,6 +91,10 @@ def main():
                 title=f"{scene.name}  {view}",
             )
             print(f"wrote {out}")
+
+        # dump the same scene out for the three.js viewer
+        web = export_web(scene, VIEWER_DATA_DIR / scene.name)
+        print(f"wrote {web}")
 
 
 if __name__ == "__main__":
