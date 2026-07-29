@@ -1,7 +1,15 @@
-# shared rendering, one plotter setup so the coil demo and the target preview
-# frame the head the same way
+# shared rendering, one plotter setup so every preview frames the head the same
+# way. draws the scalp plus an optional coil and optional target markers
 import numpy as np
 import pyvista as pv
+
+COIL_COLOR = "#1f77b4"
+
+# camera directions in RAS, where the eye sits relative to the head
+VIEW_DIRS = {
+    "front": (0.0, 1.0, 0.5),    # face on, a little up
+    "side": (-1.0, 0.2, 0.3),    # from the left, where the coil sits
+}
 
 
 def _base_plotter(scalp):
@@ -48,36 +56,13 @@ def _face_camera(p, scalp, view_dir):
     focus = np.array(scalp.center)
     p.camera_position = [tuple(focus + view * 500.0), tuple(focus), (0.0, 0.0, 1.0)]
 
-    # keeps the direction, pulls back until the head fits
-    p.reset_camera()
+    # frame to the head only, otherwise moving the coil around changes how the
+    # head sits in the shot
+    p.reset_camera(bounds=scalp.bounds)
     p.camera.zoom(0.95)
 
 
-def render_coil(scalp, coil, contact, n, gap, out_path):
-    """Scalp plus one seated figure-8 coil, saved to out_path."""
-
-    p = _base_plotter(scalp)
-    p.add_mesh(coil, color="#1f77b4", smooth_shading=True, specular=0.5, specular_power=20)
-
-    _add_axes(p)
-    p.add_text(
-        f"figure-8 coil, {gap:.2f} mm off scalp\n"
-        f"contact RAS ({contact[0]:.0f}, {contact[1]:.0f}, {contact[2]:.0f}) mm",
-        font_size=14,
-    )
-
-    # off the coil normal toward the front, shows both wings and the face
-    _face_camera(p, scalp, np.asarray(n, dtype=float) + np.array([0.0, 0.9, 0.0]))
-
-    p.screenshot(str(out_path))
-    return out_path
-
-
-def render_targets(scalp, targets, out_path, title="scalp targets"):
-    """Scalp plus a labeled marker at each target, saved to out_path."""
-
-    p = _base_plotter(scalp)
-
+def _add_markers(p, targets):
     label_pts = []
     labels = []
     for t in targets:
@@ -97,11 +82,23 @@ def render_targets(scalp, targets, out_path, title="scalp targets"):
         always_visible=True,
     )
 
-    _add_axes(p)
-    p.add_text(title, font_size=14)
 
-    # from the front and a bit up, all three sit on the front/top of the head
-    _face_camera(p, scalp, np.array([0.0, 1.0, 0.6]))
+def render_view(scalp, out_path, coil=None, targets=None, view="front", title=""):
+    """Scalp plus optional coil and target markers, from the named view."""
+
+    p = _base_plotter(scalp)
+
+    if coil is not None:
+        p.add_mesh(coil, color=COIL_COLOR, smooth_shading=True, specular=0.5, specular_power=20)
+
+    if targets:
+        _add_markers(p, targets)
+
+    _add_axes(p)
+    if title:
+        p.add_text(title, font_size=14)
+
+    _face_camera(p, scalp, VIEW_DIRS.get(view, VIEW_DIRS["front"]))
 
     p.screenshot(str(out_path))
     return out_path

@@ -9,3 +9,4 @@ class Scene:
     name: str
     scalp: object          # pyvista surface mesh in RAS mm
     targets: list = field(default_factory=list)
+    coil: object = None    # seated figure-8 coil mesh in RAS mm

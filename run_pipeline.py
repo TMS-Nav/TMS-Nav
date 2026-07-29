@@ -1,19 +1,29 @@
-# feed an mri or a folder of mris, build the head and drop the study targets on
-# it, save a preview png for each. this is the sanity check view, the real
-# showcase will be three.js later off the same scene
+# feed an mri or a folder of mris, build the head, drop the study targets and a
+# coil on it, save front and side previews for each into saves/previews. this is
+# the sanity check view, the real showcase will be three.js later off the scene
 import sys
 from pathlib import Path
 
 import numpy as np
 import pyvista as pv
 
+from src.coil_model import place_coil
 from src.head_surface import scalp_surface
 from src.scene import Scene
 from src.skull_boundary import load_mri_volume
 from src.targets import standard_targets
-from src.viz import render_targets
+from src.viz import render_view
 
 SAVE_DIR = Path("saves")
+PREVIEW_DIR = SAVE_DIR / "previews"
+
+GAP_MM = 2.0
+
+# where the coil sits, out on the left side around c3. kept low and lateral so
+# it clears the 3 markers instead of covering the vertex one
+COIL_AIM = (-1.0, -0.15, 0.6)
+
+VIEWS = ["front", "side"]
 
 
 def find_mris(path):
@@ -33,8 +43,9 @@ def build_scene(mri_path):
     # sigma 2 keeps the scalp smooth for the figure
     scalp = scalp_surface(volume, affine, smooth_sigma=2.0)
     targets = standard_targets(scalp)
+    coil = place_coil(scalp, COIL_AIM, gap=GAP_MM)
 
-    return Scene(name=Path(mri_path).name.split(".")[0], scalp=scalp, targets=targets)
+    return Scene(name=Path(mri_path).name.split(".")[0], scalp=scalp, targets=targets, coil=coil)
 
 
 def main():
@@ -46,6 +57,8 @@ def main():
     if not mris:
         print(f"no mri found at {src}")
         return
+
+    PREVIEW_DIR.mkdir(exist_ok=True)
 
     for mri in mris:
         print(f"\n=== {mri} ===")
@@ -59,13 +72,16 @@ def main():
         for t in scene.targets:
             print(f"{t.label:9s} contact RAS {np.round(t.contact, 1)}")
 
-        out = render_targets(
-            scalp,
-            scene.targets,
-            SAVE_DIR / f"{scene.name}_targets.png",
-            title=f"{scene.name}  study targets",
-        )
-        print(f"wrote {out}")
+        for view in VIEWS:
+            out = render_view(
+                scalp,
+                PREVIEW_DIR / f"{scene.name}_{view}.png",
+                coil=scene.coil,
+                targets=scene.targets,
+                view=view,
+                title=f"{scene.name}  {view}",
+            )
+            print(f"wrote {out}")
 
 
 if __name__ == "__main__":

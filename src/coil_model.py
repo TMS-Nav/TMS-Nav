@@ -2,6 +2,8 @@
 import numpy as np
 import pyvista as pv
 
+from src.head_surface import scalp_target
+
 # forward_model works in meters, R=0.035 and d=0.035, mri is in mm so scale up
 R_MM = 35.0
 D_MM = 35.0
@@ -81,3 +83,14 @@ def seat_coil(coil, scalp, n, gap=2.0, iters=12, tol=1e-3):
         out.translate(n * err, inplace=True)
 
     raise RuntimeError(f"coil never seated, last error {err:.3f} mm")
+
+
+def place_coil(scalp, aim, gap=2.0):
+    """Build a figure-8 coil and seat it gap mm off the scalp along aim."""
+
+    contact, normal, _ = scalp_target(scalp, aim)
+    e1, e2, n = coil_frame(normal)
+
+    coil = figure8_coil()
+    coil = to_world(coil, contact, e1, e2, n)
+    return seat_coil(coil, scalp, n, gap=gap)
