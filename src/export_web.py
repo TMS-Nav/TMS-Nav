@@ -7,34 +7,37 @@ import numpy as np
 
 
 def export_web(scene, out_dir):
-    """Write scalp.ply, coil.ply and targets.json for one subject."""
+    """Write the meshes and markers.json for one subject."""
 
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # head shell and the demo coil, both already in RAS mm
+    # all meshes already in RAS mm
     scene.scalp.save(str(out_dir / "scalp.ply"))
     scene.coil.save(str(out_dir / "coil.ply"))
+    if scene.brain is not None:
+        scene.brain.save(str(out_dir / "brain.ply"))
 
     payload = {
         "subject": scene.name,
         "space": "RAS_mm",
-        "targets": [_target_json(t) for t in scene.targets],
+        "targets": [_marker_json(t) for t in scene.targets],
+        "landmarks": [_marker_json(m) for m in scene.landmarks],
     }
 
-    with open(out_dir / "targets.json", "w") as f:
+    with open(out_dir / "markers.json", "w") as f:
         json.dump(payload, f, indent=2)
 
     return out_dir
 
 
-def _target_json(target):
+def _marker_json(m):
     return {
-        "name": target.name,
-        "label": target.label,
-        "color": target.color,
-        "position": _vec(target.contact),
-        "normal": _vec(target.normal),
+        "name": m.name,
+        "label": m.label,
+        "color": m.color,
+        "position": _vec(m.contact),
+        "normal": _vec(m.normal),
     }
 
 

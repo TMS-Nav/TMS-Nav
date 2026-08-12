@@ -9,10 +9,10 @@ import pyvista as pv
 
 from src.coil_model import place_coil
 from src.export_web import export_web
-from src.head_surface import scalp_surface
+from src.head_surface import brain_surface, scalp_surface
 from src.scene import Scene
 from src.skull_boundary import load_mri_volume
-from src.targets import standard_targets
+from src.targets import standard_landmarks, standard_targets
 from src.viz import render_view
 
 SAVE_DIR = Path("saves")
@@ -46,7 +46,9 @@ def build_scene(mri_path):
 
     # sigma 2 keeps the scalp smooth for the figure
     scalp = scalp_surface(volume, affine, smooth_sigma=2.0)
+    brain = brain_surface(volume, affine)
     targets = standard_targets(scalp)
+    landmarks = standard_landmarks(scalp)
     coil = place_coil(scalp, COIL_AIM, gap=GAP_MM)
 
     return Scene(
@@ -54,6 +56,8 @@ def build_scene(mri_path):
         scalp=scalp,
         targets=targets,
         coil=coil,
+        brain=brain,
+        landmarks=landmarks,
     )
 
 
@@ -77,9 +81,12 @@ def main():
         lo = np.array(scalp.bounds[0::2])
         hi = np.array(scalp.bounds[1::2])
         print(f"scalp verts   {scalp.n_points}")
+        print(f"brain verts   {scene.brain.n_points}")
         print(f"scalp span mm {np.round(hi - lo, 1)}")
         for t in scene.targets:
-            print(f"{t.label:9s} contact RAS {np.round(t.contact, 1)}")
+            print(f"target {t.label:4s} RAS {np.round(t.contact, 1)}")
+        for m in scene.landmarks:
+            print(f"lmark  {m.label:4s} RAS {np.round(m.contact, 1)}")
 
         for view in VIEWS:
             out = render_view(

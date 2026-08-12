@@ -42,6 +42,40 @@ def scalp_surface(volume, affine, smooth_sigma=1.0, smooth_iters=30):
     return surf
 
 
+def brain_surface(volume, affine, erode_mm=12, smooth_sigma=1.5, smooth_iters=40):
+    """Rough intracranial surface, the head mask eroded in by a skull thickness.
+
+    Crude stand in for the cortex, no gyri, just a smooth blob to sit inside the
+    scalp. real cortex comes from simnibs/freesurfer later.
+    """
+
+    head_mask = ndimage.binary_fill_holes(classify_head_voxels(volume))
+
+    # pull in ~12 mm to clear scalp and skull, 1 mm voxels so iters == mm
+    inner = ndimage.binary_erosion(head_mask, iterations=int(erode_mm))
+
+    # erosion can leave little islands, keep the biggest lump
+    labeled, num = ndimage.label(inner)
+    if num > 1:
+        sizes = ndimage.sum(inner, labeled, range(1, num + 1))
+        inner = labeled == (1 + int(np.argmax(sizes)))
+
+    field = ndimage.gaussian_filter(inner.astype(np.float32), sigma=smooth_sigma)
+    grid = pv.ImageData(dimensions=field.shape, spacing=(1, 1, 1), origin=(0, 0, 0))
+    grid.point_data["brain"] = field.flatten(order="F")
+
+    surf = grid.contour([0.5], scalars="brain")
+    surf.points = voxel_to_ras(surf.points, affine)
+    surf = surf.connectivity("largest")
+    surf = surf.extract_surface(algorithm="dataset_surface").clean()
+
+    if smooth_iters:
+        surf = surf.smooth_taubin(n_iter=smooth_iters, pass_band=0.05)
+
+    surf = surf.flip_faces()
+    return surf
+
+
 def check_outward(surf):
     """Sanity check on the normals, the distance math depends on it."""
 

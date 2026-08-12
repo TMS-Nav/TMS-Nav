@@ -16,8 +16,10 @@
       <fieldset>
         <legend>layers</legend>
         <label><input type="checkbox" id="toggle-scalp" checked /> scalp</label>
-        <label><input type="checkbox" id="toggle-targets" checked /> targets</label>
+        <label><input type="checkbox" id="toggle-brain" /> brain</label>
         <label><input type="checkbox" id="toggle-coil" checked /> coil</label>
+        <label><input type="checkbox" id="toggle-targets" checked /> targets</label>
+        <label><input type="checkbox" id="toggle-landmarks" checked /> landmarks</label>
       </fieldset>
 
       <div class="row">
@@ -25,7 +27,18 @@
         <input type="range" id="opacity" min="0" max="100" value="85" />
       </div>
 
-      <div class="hint">click a target for its numbers</div>
+      <div class="row">
+        <label for="variability">target variability <span id="variability-val">2.5 mm</span></label>
+        <input type="range" id="variability" min="1" max="10" step="0.5" value="2.5" />
+      </div>
+
+      <div class="key">
+        <div><span class="swatch" style="background:#111"></span> stimulation target</div>
+        <div><span class="swatch" style="background:#f2c14e"></span> EEG landmark</div>
+        <div><span class="swatch" style="background:#1f77b4"></span> coil</div>
+      </div>
+
+      <div class="hint">drag to rotate, scroll to zoom, click a marker</div>
     </div>
 
     <div id="info" class="hidden"></div>
