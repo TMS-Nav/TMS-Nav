@@ -63,7 +63,7 @@ const targetMeshes = []; // held onto for the variability slider
 // monte carlo cloud. every piece is rebuilt around its own site mean so the whole
 // cloud can be blown up by a common factor without drifting off the head
 const mcSites = []; // { mean, sampleMeshes[], meanMesh, shellMeshes[] }
-let mcScale = 10;
+let mcScale = 5;
 
 // unit spheres, scaled per marker so the slider just changes scale
 const unitSphere = new THREE.SphereGeometry(1, 20, 14);
@@ -183,10 +183,14 @@ function addMonteCarlo(mc) {
   const note = document.getElementById("mc-note");
   if (note) {
     const n = mc.noise;
-    note.textContent =
-      `${mc.n_show} of ${mc.n_draws} draws shown. landmark ${n.landmark_tangent}/` +
-      `${n.landmark_normal} mm tangent/normal, mark ${n.mark_tangent}/${n.mark_normal},` +
-      ` tape ${n.tape} mm. registered at scale ${mc.fit_scale}.`;
+    // one fact per line, the panel is narrow and this gets read at a glance
+    note.textContent = [
+      `${mc.n_show} of ${mc.n_draws} draws`,
+      `sd tangent / normal`,
+      `landmark ${n.landmark_tangent} / ${n.landmark_normal} mm`,
+      `mark ${n.mark_tangent} / ${n.mark_normal} mm`,
+      `tape ${n.tape} mm`,
+    ].join("\n");
   }
 
   for (const site of mc.sites) {

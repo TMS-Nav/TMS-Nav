@@ -163,5 +163,7 @@ input[type="range"] {
 
 #mc-panel .hint {
   margin-top: 6px;
-  line-height: 1.35;
+  line-height: 1.45;
+  /* the note is built with newlines, pre-line is what makes them break */
+  white-space: pre-line;
 }
