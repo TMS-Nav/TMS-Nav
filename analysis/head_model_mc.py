@@ -15,7 +15,11 @@ from scipy import stats
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.landmark_noise import NoiseModel, draw_dimensions  # noqa: E402
+from src.landmark_noise import (  # noqa: E402
+    NoiseModel,
+    simulate_caps,
+    tangent_basis,
+)
 from src.ten_twenty import HeadDimensions, electrode_positions, fit_ellipsoid  # noqa: E402
 
 # a typical adult head, mm. nasion to inion over the vertex, ear to ear over the
@@ -30,20 +34,14 @@ EQ_MARGIN = 2.0   # mm, how close counts as equivalent
 # point in front of cz used by the mantovani 2010 protocol
 STUDY_SITES = ["F3", "SMA"]
 
+# normal sd as a fraction of tangent sd. bone stops you pressing in, skin does not
+# stop you sliding, so the error blob is a flattened disc rather than a ball
+RATIO = 0.35
 
-def simulate(true_dims, noise, n_draws, rng):
-    """Rebuild the cap n_draws times. Returns the truth and one array per site."""
 
-    truth = electrode_positions(true_dims)
-    true_axes = fit_ellipsoid(true_dims)
-
-    draws = []
-    for _ in range(n_draws):
-        dims = draw_dimensions(true_axes, noise, rng)
-        draws.append(electrode_positions(dims))
-
-    samples = {name: np.array([d[name] for d in draws]) for name in truth}
-    return truth, samples
+# the simulation loop itself lives in src/landmark_noise.py so the viewer export can
+# share it. same function, just not duplicated
+simulate = simulate_caps
 
 
 def displacements(samples, truth):
@@ -213,7 +211,8 @@ def main():
     # not bit exact zero. a draw re-measures the arcs by walking a 2001 point polyline
     # and then refits, so the round trip carries the discretization error of that walk,
     # a few times 1e-5 mm. anything above a micron would be a real bug
-    quiet = NoiseModel(landmark=0.0, tape=0.0)
+    quiet = NoiseModel(landmark_tangent=0.0, landmark_normal=0.0,
+                       mark_tangent=0.0, mark_normal=0.0, tape=0.0)
     truth, s0 = simulate(TRUE_DIMS, quiet, 3, rng)
     worst = max(float(displacements(s0[k], truth[k]).max()) for k in truth)
     print()
@@ -222,10 +221,12 @@ def main():
     assert worst < 1e-3, "zero noise moved a site, the deterministic path is not clean"
 
     # --- the real run --------------------------------------------------------------
-    noise = NoiseModel(landmark=1.0, tape=1.0, shape="gaussian")
+    noise = NoiseModel()
     print()
-    print(f"{n_draws} draws, landmark sd {noise.landmark} mm in the tangent plane,",
-          f"tape sd {noise.tape} mm")
+    print(f"{n_draws} draws. landmark sd {noise.landmark_tangent} mm tangent /"
+          f" {noise.landmark_normal} mm normal,")
+    print(f"  mark sd {noise.mark_tangent} mm tangent / {noise.mark_normal} mm normal,"
+          f" tape sd {noise.tape} mm")
     truth, samples = simulate(TRUE_DIMS, noise, n_draws, rng)
 
     print()
@@ -241,11 +242,39 @@ def main():
     print(" scatters in, cover is the fraction of draws inside the 95% region and")
     print(" should sit near 0.95 if the chi squared scaling is right)")
 
+    # --- variance split into tangent and normal -------------------------------------
+    # this is the check that the anisotropy actually survives the whole pipeline. the
+    # scatter is resolved in the local frame of the true head at each site, so sd_t is
+    # sliding along the scalp and sd_n is in and out of it
+    print()
+    print("scatter resolved in the local surface frame (variance in mm^2):")
+    print(f"  {'site':6s} {'sd_t1':>7s} {'sd_t2':>7s} {'sd_n':>7s}   {'var_t':>7s}"
+          f" {'var_n':>7s}  {'n/t':>5s}")
+    true_axes = fit_ellipsoid(TRUE_DIMS)
+    for name in STUDY_SITES + ["Cz", "T3"]:
+        e1, e2, nvec = tangent_basis(true_axes, truth[name])
+        d = samples[name] - truth[name]
+        s1, s2, sn = (float((d @ v).std(ddof=1)) for v in (e1, e2, nvec))
+        var_t = s1**2 + s2**2
+        print(f"  {name:6s} {s1:7.2f} {s2:7.2f} {sn:7.2f}   {var_t:7.2f}"
+              f" {sn**2:7.2f}  {sn / max(s1, 1e-9):5.2f}")
+    print("  (sd_t1/sd_t2 are the two tangent directions, sd_n is the normal.)")
+    print()
+    print(f"  the pen alone was told to draw at ratio {RATIO}. F3 comes back near that,")
+    print("  but Cz and T3 come back near 1.0, and that is not a bug. getting the head")
+    print("  SIZE wrong moves a site straight in or out along its own normal, and at the")
+    print("  vertex and the ears that is exactly where the size error points. so the")
+    print("  head model piles extra variance onto the normal direction at those sites")
+    print("  and the blob rounds out. F3 sits on a slope, so its size error is mostly")
+    print("  tangential there and the disc stays flat.")
+
     # --- does the spread scale the way it should ------------------------------------
     print()
     print("displacement rms at F3 against landmark sd, should be a straight line:")
     for sd in (0.2, 0.5, 1.0, 2.0):
-        _, s = simulate(TRUE_DIMS, NoiseModel(landmark=sd, tape=0.0), 400, rng)
+        sweep = NoiseModel(landmark_tangent=sd, landmark_normal=sd * RATIO,
+                           mark_tangent=sd, mark_normal=sd * RATIO, tape=0.0)
+        _, s = simulate(TRUE_DIMS, sweep, 400, rng)
         r = float(np.sqrt((displacements(s["F3"], truth["F3"]) ** 2).mean()))
         print(f"  landmark sd {sd:4.1f} mm  ->  F3 rms {r:6.2f} mm   ratio {r / sd:6.2f}")
 
@@ -263,10 +292,10 @@ def main():
     sigma = float(tolerance_region(samples["F3"], truth["F3"])["rms_mm"])
     print()
     print(f"capError to carry into sample_size.py, rms miss at F3: {sigma:.2f} mm")
-    print(" (the script currently guesses capErrors = [1.0, 2.0, 2.5], so the geometry")
-    print("  alone is a good deal tighter than the guess. that is only the geometry")
-    print("  though, it does not include drawing the mark on the scalp or the coil")
-    print("  being held off the mark, which is where the rest of the budget goes)")
+    print(" this now covers measuring the head AND drawing the mark on it. it lands in")
+    print(" the middle of the old guessed sweep [1.0, 2.0, 2.5], so the guess was sound,")
+    print(" it just had no evidence under it. still not in here: the coil being held off")
+    print(" the mark or tilted, hair and cap slip, and the head not being an ellipsoid.")
 
     # --- check the closed form n against simulation -----------------------------------
     print()
@@ -280,9 +309,9 @@ def main():
         print(f"  {cap:9.2f} {spread:7.2f} {n_z:9d} {power_by_simulation(spread, BIAS, n_z, rng):7.3f}"
               f" {n_t:9d} {power_by_simulation(spread, BIAS, n_t, rng):7.3f}")
     print(" the normal quantile formula misses 80% power badly at these small n. it")
-    print(" assumes you know the sd, but you are estimating it from the same handful")
-    print(" of subjects, so the real test uses t and needs a bigger n. worth fixing")
-    print(" in sample_size.py, the numbers there are optimistic by 2-4 subjects")
+    print(" assumes you know the sd, but you are estimating it from the same handful of")
+    print(" subjects, so the real test uses t and needs a bigger n. sample_size.py now")
+    print(" carries both columns, this is the check that the fix in there is right.")
 
     # --- the subject level test, on stand in subject means so the wiring is visible -----
     print()

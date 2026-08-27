@@ -8,6 +8,7 @@ import numpy as np
 import pyvista as pv
 
 from src.coil_model import place_coil
+from src.export_mc import export_monte_carlo
 from src.export_web import export_web
 from src.head_surface import brain_surface, scalp_surface
 from src.scene import Scene
@@ -102,6 +103,16 @@ def main():
         # dump the same scene out for the three.js viewer
         web = export_web(scene, VIEWER_DATA_DIR / scene.name)
         print(f"wrote {web}")
+
+        # and the monte carlo cloud that sits on top of the targets
+        mc_path, mc = export_monte_carlo(scene, VIEWER_DATA_DIR / scene.name)
+        print(f"wrote {mc_path}")
+        print(f"  registered onto the subject, scale {mc['fit_scale']:.3f},"
+              f" landmark residual {mc['fit_residual_mm']:.1f} mm")
+        for site in mc["sites"]:
+            sig = ", ".join(f"{v:.2f}" for v in site["sigmas"])
+            print(f"  {site['label']:4s} rms {site['rms_mm']:5.2f} mm  p95"
+                  f" {site['p95_mm']:5.2f} mm  sigmas {sig}")
 
 
 if __name__ == "__main__":

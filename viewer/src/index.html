@@ -20,6 +20,7 @@
         <label><input type="checkbox" id="toggle-coil" checked /> coil</label>
         <label><input type="checkbox" id="toggle-targets" checked /> targets</label>
         <label><input type="checkbox" id="toggle-landmarks" checked /> landmarks</label>
+        <label><input type="checkbox" id="toggle-mc" /> monte carlo</label>
       </fieldset>
 
       <div class="row">
@@ -31,6 +32,18 @@
         <label for="variability">target variability <span id="variability-val">2.5 mm</span></label>
         <input type="range" id="variability" min="1" max="10" step="0.5" value="2.5" />
       </div>
+
+      <fieldset id="mc-panel" class="dim">
+        <legend>monte carlo</legend>
+        <div class="row">
+          <label for="mc-scale">exaggerate <span id="mc-scale-val">x10</span></label>
+          <input type="range" id="mc-scale" min="1" max="40" step="1" value="10" />
+        </div>
+        <label><input type="checkbox" id="mc-samples" checked /> samples</label>
+        <label><input type="checkbox" id="mc-mean" checked /> mean</label>
+        <label><input type="checkbox" id="mc-ellipsoid" checked /> 95% ellipsoid</label>
+        <div class="hint" id="mc-note">...</div>
+      </fieldset>
 
       <div class="key">
         <div><span class="swatch" style="background:#111"></span> stimulation target</div>

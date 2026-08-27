@@ -155,3 +155,13 @@ input[type="range"] {
   text-shadow: 0 0 3px #000, 0 0 3px #000;
   pointer-events: none;
 }
+
+/* the monte carlo panel greys out when the layer is off, the controls still work */
+#mc-panel.dim {
+  opacity: 0.4;
+}
+
+#mc-panel .hint {
+  margin-top: 6px;
+  line-height: 1.35;
+}

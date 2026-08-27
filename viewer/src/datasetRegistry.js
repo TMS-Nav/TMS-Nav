@@ -2,6 +2,7 @@
 // json is imported directly so parcel hands us the parsed object. add a subject
 // by dropping a folder under data and another block here
 import T1_MARKERS from "./data/T1/markers.json";
+import T1_MC from "./data/T1/montecarlo.json";
 
 export const DATASETS = {
   T1: {
@@ -10,5 +11,6 @@ export const DATASETS = {
     brainURL: new URL("./data/T1/brain.ply", import.meta.url),
     coilURL: new URL("./data/T1/coil.ply", import.meta.url),
     markers: T1_MARKERS,
+    monteCarlo: T1_MC,
   },
 };
