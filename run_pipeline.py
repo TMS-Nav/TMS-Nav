@@ -9,7 +9,7 @@ import pyvista as pv
 
 from src.coil_model import place_coil
 from src.export_mc import export_monte_carlo
-from src.export_web import export_web
+from src.export_web import export_web, write_registry
 from src.head_surface import brain_surface, scalp_surface
 from src.scene import Scene
 from src.skull_boundary import load_mri_volume
@@ -21,6 +21,9 @@ PREVIEW_DIR = SAVE_DIR / "previews"
 
 # three.js viewer reads its data from here, one folder per subject
 VIEWER_DATA_DIR = Path("viewer") / "src" / "data"
+
+# regenerated every run so the viewer dropdown matches whatever is in saves/
+REGISTRY_PATH = Path("viewer") / "src" / "datasetRegistry.js"
 
 GAP_MM = 2.0
 
@@ -113,6 +116,12 @@ def main():
             sig = ", ".join(f"{v:.2f}" for v in site["sigmas"])
             print(f"  {site['label']:4s} rms {site['rms_mm']:5.2f} mm  p95"
                   f" {site['p95_mm']:5.2f} mm  sigmas {sig}")
+
+    # last, point the viewer at every subject that came out of this run
+    reg, subjects = write_registry(VIEWER_DATA_DIR, REGISTRY_PATH)
+    print()
+    print(f"wrote {reg}")
+    print(f"viewer dropdown: {', '.join(subjects)}")
 
 
 if __name__ == "__main__":

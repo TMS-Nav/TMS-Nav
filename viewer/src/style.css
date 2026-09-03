@@ -39,9 +39,39 @@ body {
 }
 
 .subject {
-  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 16px;
+}
+
+.subject label {
+  font-size: 14px;
   color: #9aa0aa;
-  margin: 2px 0 14px;
+}
+
+/* the subject picker is the main thing you reach for with several mris loaded,
+   so it gets to be the biggest control in the panel */
+#subject-select {
+  flex: 1;
+  font-size: 16px;
+  font-weight: 600;
+  font-family: inherit;
+  color: #e8eaed;
+  background: #24262e;
+  border: 1px solid #3a3d46;
+  border-radius: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+
+#subject-select:hover {
+  border-color: #5a5e6a;
+}
+
+#subject-select:focus {
+  outline: none;
+  border-color: #1f77b4;
 }
 
 fieldset {
