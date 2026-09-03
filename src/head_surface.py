@@ -1,7 +1,7 @@
 # scalp surface from the t1, outer shell only
 import numpy as np
 import pyvista as pv
-from scipy import ndimage
+from scipy import ndimage, sparse
 from scipy.spatial import cKDTree
 
 from src.skull_boundary import classify_head_voxels
@@ -17,10 +17,15 @@ def voxel_sizes(affine):
     return np.linalg.norm(np.asarray(affine)[:3, :3], axis=0)
 
 
-def scalp_surface(volume, affine, smooth_sigma=1.0, smooth_iters=30):
-    """Outer scalp as a pyvista mesh, points in RAS mm."""
+def scalp_surface(volume, affine, smooth_sigma=1.0, smooth_iters=30, mask=None, wipe=None):
+    """Outer scalp as a pyvista mesh, points in RAS mm.
 
-    head_mask = classify_head_voxels(volume)
+    pass mask to reuse a head mask already built for this scan, otherwise one is
+    built here off the volume and affine. wipe is the zeroed block of a defaced
+    scan, see HeadMaskInfo, and gets the cut ironed flat
+    """
+
+    head_mask = classify_head_voxels(volume, affine) if mask is None else mask
 
     # blur first or marching cubes gives back a voxel staircase. sigma is in mm, so
     # divide by the voxel size per axis, otherwise an anisotropic scan gets blurred
@@ -47,6 +52,9 @@ def scalp_surface(volume, affine, smooth_sigma=1.0, smooth_iters=30):
     if smooth_iters:
         surf = surf.smooth_taubin(n_iter=smooth_iters, pass_band=0.05)
 
+    if wipe is not None:
+        surf = flatten_cut(surf, wipe, affine)
+
     # field is 1 inside 0 out so the contour normals point inward, which makes
     # every distance come back with the wrong sign
     surf = surf.flip_faces()
@@ -55,14 +63,57 @@ def scalp_surface(volume, affine, smooth_sigma=1.0, smooth_iters=30):
     return surf
 
 
-def brain_surface(volume, affine, erode_mm=12, smooth_sigma=1.5, smooth_iters=40):
+def flatten_cut(surf, wipe, affine, reach_vox=3, n_iter=150):
+    """Iron the deface cut flat, leave the rest of the head alone.
+
+    the wipe is a box, so its faces are planes, but a plane rasterised on the voxel
+    grid is a staircase, and once blurred and contoured the treads show up as
+    shading ripples across the whole cut. plain laplacian smoothing on just the
+    vertices sitting against the wiped block, with every other vertex held fixed,
+    pulls that patch onto the flattest surface spanning its rim, which for a
+    planar rim is the plane. nothing outside the cut moves
+    """
+
+    # the contour sits a voxel or two off the wipe after the blur, so reach out
+    near = ndimage.binary_dilation(wipe, iterations=reach_vox)
+
+    inv = np.linalg.inv(np.asarray(affine, dtype=float))
+    ijk = np.rint(surf.points @ inv[:3, :3].T + inv[:3, 3]).astype(int)
+    ijk = np.clip(ijk, 0, np.array(near.shape) - 1)
+    on_cut = near[ijk[:, 0], ijk[:, 1], ijk[:, 2]]
+    if not on_cut.any():
+        return surf
+
+    # vertex adjacency off the triangles, each edge both ways
+    tri = surf.faces.reshape(-1, 4)[:, 1:]
+    i = np.concatenate([tri[:, 0], tri[:, 1], tri[:, 2], tri[:, 1], tri[:, 2], tri[:, 0]])
+    j = np.concatenate([tri[:, 1], tri[:, 2], tri[:, 0], tri[:, 0], tri[:, 1], tri[:, 2]])
+    n = surf.n_points
+    adj = sparse.coo_matrix((np.ones(len(i)), (i, j)), shape=(n, n)).tocsr()
+    adj.data[:] = 1.0
+    degree = np.asarray(adj.sum(axis=1)).ravel()
+    degree[degree == 0] = 1.0
+    average = sparse.diags(1.0 / degree) @ adj
+
+    pts = np.asarray(surf.points, dtype=np.float64).copy()
+    idx = np.flatnonzero(on_cut)
+    for _ in range(n_iter):
+        pts[idx] = (average @ pts)[idx]
+
+    out = surf.copy()
+    out.points = pts.astype(np.float32)
+    return out
+
+
+def brain_surface(volume, affine, erode_mm=12, smooth_sigma=1.5, smooth_iters=40, mask=None):
     """Rough intracranial surface, the head mask eroded in by a skull thickness.
 
     Crude stand in for the cortex, no gyri, just a smooth blob to sit inside the
-    scalp. real cortex comes from simnibs/freesurfer later.
+    scalp. real cortex comes from simnibs/freesurfer later. the head mask comes
+    out solid, so there is nothing left to fill before eroding
     """
 
-    head_mask = ndimage.binary_fill_holes(classify_head_voxels(volume))
+    head_mask = classify_head_voxels(volume, affine) if mask is None else mask
 
     # pull in erode_mm to clear scalp and skull. binary_erosion counts voxels, not
     # mm, so on a 1 x 1 x 1.2 mm scan it would eat 12 mm two ways and 14.4 the third.

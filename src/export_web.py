@@ -23,6 +23,8 @@ def export_web(scene, out_dir):
         "space": "RAS_mm",
         "targets": [_marker_json(t) for t in scene.targets],
         "landmarks": [_marker_json(m) for m in scene.landmarks],
+        # threshold, defaced flag and so on, so the viewer can say what it is showing
+        "qc": scene.qc,
     }
 
     with open(out_dir / "markers.json", "w") as f:
@@ -72,9 +74,15 @@ def write_registry(data_dir, registry_path):
         var = f"S{i}"
         imports.append(f'import {var}_MARKERS from "./data/{name}/markers.json";')
         imports.append(f'import {var}_MC from "./data/{name}/montecarlo.json";')
+
+        # a wiped face is the scan, not a bug, so say so where the subject is picked
+        with open(data_dir / name / "markers.json") as f:
+            qc = json.load(f).get("qc", {})
+        label = f"{name} (defaced)" if qc.get("defaced") else name
+
         entries.append(
             f'  {json.dumps(name)}: {{\n'
-            f'    label: {json.dumps(name)},\n'
+            f'    label: {json.dumps(label)},\n'
             f'    scalpURL: new URL("./data/{name}/scalp.ply", import.meta.url),\n'
             f'    brainURL: new URL("./data/{name}/brain.ply", import.meta.url),\n'
             f'    coilURL: new URL("./data/{name}/coil.ply", import.meta.url),\n'

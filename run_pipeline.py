@@ -12,7 +12,8 @@ from src.export_mc import export_monte_carlo
 from src.export_web import export_web, write_registry
 from src.head_surface import brain_surface, scalp_surface
 from src.scene import Scene
-from src.skull_boundary import load_mri_volume
+from src.skull_boundary import head_mask, load_mri_volume
+from src.stats import render_distance_hist
 from src.targets import standard_landmarks, standard_targets
 from src.viz import render_view
 
@@ -48,9 +49,12 @@ def build_scene(mri_path):
 
     volume, affine = load_mri_volume(mri_path)
 
+    # one mask for both surfaces, and the qc that came with it
+    mask, info = head_mask(volume, affine)
+
     # sigma 2 keeps the scalp smooth for the figure
-    scalp = scalp_surface(volume, affine, smooth_sigma=2.0)
-    brain = brain_surface(volume, affine)
+    scalp = scalp_surface(volume, affine, smooth_sigma=2.0, mask=mask, wipe=info.wipe)
+    brain = brain_surface(volume, affine, mask=mask)
     targets = standard_targets(scalp)
     landmarks = standard_landmarks(scalp)
     coil = place_coil(scalp, COIL_AIM, gap=GAP_MM)
@@ -62,6 +66,7 @@ def build_scene(mri_path):
         coil=coil,
         brain=brain,
         landmarks=landmarks,
+        qc=info.as_dict(),
     )
 
 
@@ -84,6 +89,13 @@ def main():
         scalp = scene.scalp
         lo = np.array(scalp.bounds[0::2])
         hi = np.array(scalp.bounds[1::2])
+        qc = scene.qc
+        print(f"voxel mm      {qc['voxel_mm']}   air/tissue cut {qc['threshold']:.0f}")
+        print(f"head          {100 * qc['head_frac']:.0f}% of volume,"
+              f" {100 * qc['nodata_frac']:.0f}% of volume is zero padding or wipe")
+        if qc["defaced"]:
+            print(f"DEFACED       {qc['cut_area_cm2']:.0f} cm2 of head surface is the"
+                  f" wipe, the face is not in this file and cannot be rebuilt")
         print(f"scalp verts   {scalp.n_points}")
         print(f"brain verts   {scene.brain.n_points}")
         print(f"scalp span mm {np.round(hi - lo, 1)}")
@@ -114,8 +126,14 @@ def main():
               f" landmark residual {mc['fit_residual_mm']:.1f} mm")
         for site in mc["sites"]:
             sig = ", ".join(f"{v:.2f}" for v in site["sigmas"])
-            print(f"  {site['label']:4s} rms {site['rms_mm']:5.2f} mm  p95"
-                  f" {site['p95_mm']:5.2f} mm  sigmas {sig}")
+            m, q = site["miss_stats"], site["pair_stats"]
+            print(f"  {site['label']:4s} to target mean {m['mean_mm']:.2f} sd {m['sd_mm']:.2f}"
+                  f" p95 {m['p95_mm']:.2f} mm | between placements mean {q['mean_mm']:.2f}"
+                  f" p95 {q['p95_mm']:.2f} mm | sigmas {sig}")
+
+        # the distributions themselves, as a figure next to the previews
+        fig = render_distance_hist(mc, PREVIEW_DIR / f"{scene.name}_distances.png", subject=scene.name)
+        print(f"wrote {fig}")
 
     # last, point the viewer at every subject that came out of this run
     reg, subjects = write_registry(VIEWER_DATA_DIR, REGISTRY_PATH)

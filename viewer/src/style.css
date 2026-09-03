@@ -20,6 +20,122 @@ body {
   height: 100%;
 }
 
+/* small flat button, matches the zoom bar */
+#mc-resample {
+  background: #2a2d35;
+  color: #e8e8e8;
+  border: 1px solid #3a3d46;
+  border-radius: 4px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  margin-right: 8px;
+}
+
+#mc-resample:hover {
+  background: #3a3d46;
+}
+
+#mc-draw {
+  margin-top: 0;
+  vertical-align: middle;
+}
+
+/* distance histograms, top right, same panel as the controls */
+#dist {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 332px;
+  padding: 14px 16px 12px;
+  background: rgba(28, 30, 36, 0.88);
+  border: 1px solid #3a3d46;
+  border-radius: 8px;
+}
+
+#dist.hidden {
+  display: none;
+}
+
+#dist h2 {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+#dist .seg {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+#dist .seg button {
+  flex: 1;
+  background: #2a2d35;
+  color: #9aa0aa;
+  border: 1px solid #3a3d46;
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+#dist .seg button.on {
+  background: #3a3d46;
+  color: #e8e8e8;
+}
+
+.dist-site {
+  margin-bottom: 6px;
+}
+
+.dist-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  margin-bottom: 2px;
+}
+
+.dist-label .muted {
+  color: #9aa0aa;
+}
+
+.dist-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.dist-svg .axis {
+  stroke: #4a4e58;
+  stroke-width: 1;
+}
+
+.dist-svg .tick {
+  fill: #767c86;
+  font-size: 8px;
+}
+
+.dist-svg .rug {
+  stroke: #e8e8e8;
+  stroke-width: 1;
+  opacity: 0.7;
+}
+
+.dist-svg .stat {
+  stroke: #e8e8e8;
+  stroke-width: 1;
+}
+
+.dist-svg .stat.dotted {
+  stroke-dasharray: 1 2;
+}
+
+#dist .hint {
+  margin-top: 6px;
+}
+
 /* flat dark panels, same feel as the fmriviz viewer */
 #ui {
   position: absolute;

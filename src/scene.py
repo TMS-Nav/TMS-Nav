@@ -12,3 +12,4 @@ class Scene:
     coil: object = None    # seated figure-8 coil mesh in RAS mm
     brain: object = None   # rough intracranial surface in RAS mm
     landmarks: list = field(default_factory=list)  # eeg registration points
+    qc: dict = field(default_factory=dict)         # what the head mask found, see HeadMaskInfo

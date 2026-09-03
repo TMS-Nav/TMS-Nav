@@ -23,7 +23,7 @@ export const DATASETS = {
     monteCarlo: S0_MC,
   },
   "T2": {
-    label: "T2",
+    label: "T2 (defaced)",
     scalpURL: new URL("./data/T2/scalp.ply", import.meta.url),
     brainURL: new URL("./data/T2/brain.ply", import.meta.url),
     coilURL: new URL("./data/T2/coil.ply", import.meta.url),
@@ -31,7 +31,7 @@ export const DATASETS = {
     monteCarlo: S1_MC,
   },
   "T3": {
-    label: "T3",
+    label: "T3 (defaced)",
     scalpURL: new URL("./data/T3/scalp.ply", import.meta.url),
     brainURL: new URL("./data/T3/brain.ply", import.meta.url),
     coilURL: new URL("./data/T3/coil.ply", import.meta.url),
@@ -39,7 +39,7 @@ export const DATASETS = {
     monteCarlo: S2_MC,
   },
   "T4": {
-    label: "T4",
+    label: "T4 (defaced)",
     scalpURL: new URL("./data/T4/scalp.ply", import.meta.url),
     brainURL: new URL("./data/T4/brain.ply", import.meta.url),
     coilURL: new URL("./data/T4/coil.ply", import.meta.url),
@@ -47,7 +47,7 @@ export const DATASETS = {
     monteCarlo: S3_MC,
   },
   "T5": {
-    label: "T5",
+    label: "T5 (defaced)",
     scalpURL: new URL("./data/T5/scalp.ply", import.meta.url),
     brainURL: new URL("./data/T5/brain.ply", import.meta.url),
     coilURL: new URL("./data/T5/coil.ply", import.meta.url),
@@ -55,7 +55,7 @@ export const DATASETS = {
     monteCarlo: S4_MC,
   },
   "T6": {
-    label: "T6",
+    label: "T6 (defaced)",
     scalpURL: new URL("./data/T6/scalp.ply", import.meta.url),
     brainURL: new URL("./data/T6/brain.ply", import.meta.url),
     coilURL: new URL("./data/T6/coil.ply", import.meta.url),

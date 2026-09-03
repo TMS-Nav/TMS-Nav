@@ -58,7 +58,7 @@ def standard_landmarks(surf):
 
     picks = [
         ("Cz", "Cz", _pick(p, np.abs(x) < 20, z, "max")),        # vertex
-        ("nasion", "Nz", _pick(p, face_band, y, "max")),         # front, over the nose
+        ("nasion", "Nz", _nasion(p)),                            # dip between brow and nose
         ("inion", "Iz", _pick(p, back_band, y, "min")),          # bump at the back
         ("LPA", "LPA", _pick(p, ear_band, x, "min")),            # left ear
         ("RPA", "RPA", _pick(p, ear_band, x, "max")),            # right ear
@@ -70,6 +70,52 @@ def standard_landmarks(surf):
         n = n / np.linalg.norm(n)
         out.append(Target(name, label, LANDMARK_COLOR, None, pos, n))
     return out
+
+
+def _nasion(points, half_width=4.0, tip_below_top=(55.0, 170.0), window=60.0,
+            min_dip=5.0, min_rise=2.0):
+    """The nasion, read off the midline profile of the face.
+
+    walk down the front of the head along the midline and the profile bulges out
+    at the brow, dips in at the bridge of the nose, and bulges out again at the
+    nose tip. the nasion is that dip. so: find the nose tip as the most anterior
+    point in the band of heights a nose can sit at, measured down from the vertex
+    rather than from the middle of the mesh, because the mesh may or may not have
+    a neck on it. then look up from the tip for the deepest point, and accept it
+    only if the nose really sticks out past it and the brow comes forward again
+    above it. a defaced head has no nose, its profile just slopes back from the
+    cut, so nothing passes and the pick falls back to the most anterior point,
+    which is the top edge of the cut at brow height, the best that scan can do.
+    """
+
+    p = points
+    z_top = p[:, 2].max()
+
+    # anterior most vertex for every mm of height along the midline strip
+    mid = np.flatnonzero(np.abs(p[:, 0]) < half_width)
+    best = {}
+    for i, zz in zip(mid, np.round(p[mid, 2]).astype(int)):
+        if zz not in best or p[i, 1] > p[best[zz], 1]:
+            best[zz] = i
+    zs = np.array(sorted(best))
+    idx = np.array([best[k] for k in zs])
+    ys = p[idx, 1]
+
+    band = (zs >= z_top - tip_below_top[1]) & (zs <= z_top - tip_below_top[0])
+    if not band.any():
+        return p[idx[np.argmax(ys)]]
+    k_tip = np.flatnonzero(band)[np.argmax(ys[band])]
+
+    win = np.flatnonzero((zs > zs[k_tip]) & (zs <= zs[k_tip] + window))
+    if len(win):
+        k_min = win[np.argmin(ys[win])]
+        above = win[win > k_min]
+        dip = ys[k_tip] - ys[k_min]
+        rise = ys[above].max() - ys[k_min] if len(above) else 0.0
+        if dip >= min_dip and rise >= min_rise:
+            return p[idx[k_min]]
+
+    return p[idx[k_tip]]
 
 
 def _pick(points, mask, key, mode):

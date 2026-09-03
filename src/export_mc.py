@@ -12,6 +12,7 @@ import numpy as np
 
 from src.align import similarity_transform
 from src.landmark_noise import NoiseModel, simulate_caps
+from src.stats import miss_distances, pair_distances, summary
 from src.ten_twenty import HeadDimensions
 
 # the model names its anchors Nz/Iz, targets.standard_landmarks says nasion/inion
@@ -22,16 +23,20 @@ LANDMARK_ALIAS = {"nasion": "Nz", "inion": "Iz", "Cz": "Cz", "LPA": "LPA", "RPA"
 # visible when it does not
 NOMINAL_DIMS = HeadDimensions(nasion_inion=360.0, lpa_rpa=350.0, circumference=570.0)
 
-# how many of the draws to actually ship. enough to read as a cloud, few enough that
-# the json stays small and the individual dots stay distinguishable
+# how many draws show at once. enough to read as a cloud, few enough that the
+# individual dots stay distinguishable
 N_SHOW = 50
+
+# how many draws to ship in the json. the viewer picks n_show of these at random
+# and can pick again, so the cloud can be redrawn without rerunning python
+N_KEEP = 400
 
 # mahalanobis radii to draw shells at. 1/2/3 sigma
 SHELLS = (1.0, 2.0, 3.0)
 
 
 def monte_carlo_cloud(landmarks, targets, dims=NOMINAL_DIMS, noise=None,
-                      n_draws=1200, n_show=N_SHOW, seed=0):
+                      n_draws=1200, n_show=N_SHOW, n_keep=N_KEEP, seed=0):
     """Per target cloud, mean and covariance ellipsoid, all in subject RAS mm."""
 
     rng = np.random.default_rng(seed)
@@ -84,10 +89,14 @@ def monte_carlo_cloud(landmarks, targets, dims=NOMINAL_DIMS, noise=None,
         eigval, eigvec = np.clip(eigval[order], 0.0, None), eigvec[:, order]
         sigmas = np.sqrt(eigval)
 
-        pick = rng.choice(len(pts), size=min(n_show, len(pts)), replace=False)
+        pick = rng.choice(len(pts), size=min(n_keep, len(pts)), replace=False)
 
         ideal = np.asarray(t.contact, dtype=float)
-        miss = np.linalg.norm(pts - ideal, axis=1)
+
+        # the two distributions aim 1 is about. how far a placement lands from the
+        # mri target, and how far two placements land from each other
+        miss = miss_distances(pts, ideal)
+        pair = pair_distances(pts, rng)
 
         sites.append({
             "name": t.name,
@@ -101,12 +110,19 @@ def monte_carlo_cloud(landmarks, targets, dims=NOMINAL_DIMS, noise=None,
             "samples": [_vec(p) for p in pts[pick]],
             "rms_mm": round(float(np.sqrt((miss**2).mean())), 3),
             "p95_mm": round(float(np.percentile(miss, 95)), 3),
+            # every draw, not just the shipped subset, so the histograms are the
+            # real thing. a few hundred floats per site
+            "miss_mm": [round(float(v), 3) for v in miss],
+            "miss_stats": summary(miss),
+            "pair_mm": [round(float(v), 3) for v in pair],
+            "pair_stats": summary(pair),
         })
 
     return {
         "space": "RAS_mm",
         "n_draws": n_draws,
-        "n_show": int(min(n_show, n_draws)),
+        "n_show": int(min(n_show, n_keep, n_draws)),
+        "n_keep": int(min(n_keep, n_draws)),
         "shells": list(SHELLS),
         "fit_scale": round(scale, 4),
         "fit_residual_mm": round(resid, 2),

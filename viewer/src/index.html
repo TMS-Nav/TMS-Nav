@@ -18,12 +18,12 @@
 
       <fieldset>
         <legend>layers</legend>
-        <label><input type="checkbox" id="toggle-scalp" checked /> scalp</label>
-        <label><input type="checkbox" id="toggle-brain" /> brain</label>
-        <label><input type="checkbox" id="toggle-coil" checked /> coil</label>
-        <label><input type="checkbox" id="toggle-targets" checked /> targets</label>
-        <label><input type="checkbox" id="toggle-landmarks" checked /> landmarks</label>
-        <label><input type="checkbox" id="toggle-mc" /> monte carlo</label>
+        <label><input type="checkbox" id="toggle-scalp" autocomplete="off" checked /> scalp</label>
+        <label><input type="checkbox" id="toggle-brain" autocomplete="off" /> brain</label>
+        <label><input type="checkbox" id="toggle-coil" autocomplete="off" checked /> coil</label>
+        <label><input type="checkbox" id="toggle-targets" autocomplete="off" checked /> targets</label>
+        <label><input type="checkbox" id="toggle-landmarks" autocomplete="off" checked /> landmarks</label>
+        <label><input type="checkbox" id="toggle-mc" autocomplete="off" checked /> monte carlo</label>
       </fieldset>
 
       <div class="row">
@@ -36,15 +36,20 @@
         <input type="range" id="variability" min="1" max="10" step="0.5" value="2.5" />
       </div>
 
-      <fieldset id="mc-panel" class="dim">
+      <fieldset id="mc-panel">
         <legend>monte carlo</legend>
         <div class="row">
           <label for="mc-scale">exaggerate <span id="mc-scale-val">x5</span></label>
           <input type="range" id="mc-scale" min="1" max="10" step="1" value="5" />
         </div>
-        <label><input type="checkbox" id="mc-samples" checked /> samples</label>
-        <label><input type="checkbox" id="mc-mean" checked /> mean</label>
-        <label><input type="checkbox" id="mc-ellipsoid" checked /> 95% ellipsoid</label>
+        <label><input type="checkbox" id="mc-samples" autocomplete="off" checked /> samples</label>
+        <label><input type="checkbox" id="mc-mean" autocomplete="off" checked /> mean</label>
+        <label><input type="checkbox" id="mc-ellipsoid" autocomplete="off" checked /> 95% ellipsoid</label>
+        <label><input type="checkbox" id="mc-dist" autocomplete="off" checked /> distance histograms</label>
+        <div class="row">
+          <button id="mc-resample" type="button" title="draw a fresh random set">resample</button>
+          <span class="hint" id="mc-draw"></span>
+        </div>
         <div class="hint" id="mc-note">...</div>
       </fieldset>
 
@@ -58,6 +63,21 @@
     </div>
 
     <div id="info" class="hidden"></div>
+
+    <div id="dist">
+      <div class="dist-head">
+        <h2>placement error</h2>
+        <div class="seg">
+          <button type="button" data-metric="miss" class="on">to MRI target</button>
+          <button type="button" data-metric="pair">between two placements</button>
+        </div>
+      </div>
+      <div id="dist-charts"></div>
+      <div class="hint">
+        every simulated cap. solid line mean, dotted line 95th percentile, ticks are
+        the draws on screen. hover a bar for its count.
+      </div>
+    </div>
 
     <div id="zoom">
       <button id="zoom-out" type="button" title="zoom out">&minus;</button>

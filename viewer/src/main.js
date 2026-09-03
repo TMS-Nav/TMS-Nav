@@ -53,17 +53,61 @@ const coilGroup = new THREE.Group();
 const targetGroup = new THREE.Group();
 const landmarkGroup = new THREE.Group();
 const mcGroup = new THREE.Group();
-brainGroup.visible = false; // off by default, it sits inside the scalp
-mcGroup.visible = false; // off by default, it is a lot of geometry
 scene.add(scalpGroup, brainGroup, coilGroup, targetGroup, landmarkGroup, mcGroup);
+
+// which layers are on. the brain is off by default because it sits inside the
+// scalp, everything else shows. choices survive a reload via localStorage, and on
+// start the same state is pushed onto both the checkbox and the layer, so the two
+// cannot drift apart the way they did when the browser restored the boxes alone
+const LAYER_DEFAULTS = {
+  "toggle-scalp": true,
+  "toggle-brain": false,
+  "toggle-coil": true,
+  "toggle-targets": true,
+  "toggle-landmarks": true,
+  "toggle-mc": true,
+  "mc-samples": true,
+  "mc-mean": true,
+  "mc-ellipsoid": true,
+  "mc-dist": true,
+};
+const LAYER_STORAGE_KEY = "tms-nav-layers";
+
+function loadLayerState() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LAYER_STORAGE_KEY) || "{}");
+    return { ...LAYER_DEFAULTS, ...saved };
+  } catch {
+    return { ...LAYER_DEFAULTS };
+  }
+}
+
+function saveLayerState(state) {
+  try {
+    localStorage.setItem(LAYER_STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // private window or storage blocked, the session still works, it just forgets
+  }
+}
+
+const layerState = loadLayerState();
+brainGroup.visible = layerState["toggle-brain"];
+mcGroup.visible = layerState["toggle-mc"];
+
+// distance histograms. the monte carlo payload of the loaded subject, and which of
+// its two distances is on show
+let distData = null;
+let distMetric = "miss";
+const DIST_BINS = 30;
 
 let scalpMaterial = null; // held onto for the opacity slider
 const targetMeshes = []; // held onto for the variability slider
 
 // monte carlo cloud. every piece is rebuilt around its own site mean so the whole
 // cloud can be blown up by a common factor without drifting off the head
-const mcSites = []; // { mean, sampleMeshes[], meanMesh, shellMeshes[] }
+const mcSites = []; // { mean, pool[], offsets[], sampleMeshes[], meanMesh, shellMeshes[] }
 let mcScale = 5;
+let mcDrawSet = 0; // how many times the cloud has been redrawn on this subject
 
 // camera distance that exactly frames the current head. 100% zoom means this, so
 // every subject reads as 100% when you switch to it no matter how big their head is
@@ -267,7 +311,7 @@ function addMonteCarlo(mc) {
     const n = mc.noise;
     // one fact per line, the panel is narrow and this gets read at a glance
     note.textContent = [
-      `${mc.n_show} of ${mc.n_draws} draws`,
+      `${mc.n_show} of ${mc.n_keep} shipped draws, ${mc.n_draws} simulated`,
       `sd tangent / normal`,
       `landmark ${n.landmark_tangent} / ${n.landmark_normal} mm`,
       `mark ${n.mark_tangent} / ${n.mark_normal} mm`,
@@ -278,20 +322,23 @@ function addMonteCarlo(mc) {
   for (const site of mc.sites) {
     const color = new THREE.Color(site.color);
     const mean = new THREE.Vector3().fromArray(site.mean);
-    const entry = { mean, sampleMeshes: [], meanMesh: null, shellMeshes: [], offsets: [] };
+    const entry = { mean, pool: [], offsets: [], sampleMeshes: [], meanMesh: null, shellMeshes: [] };
+
+    // every shipped draw, as an offset from the site mean. n_show of these are on
+    // screen at a time, picked at random, and resample picks again
+    entry.pool = site.samples.map((s) => new THREE.Vector3().fromArray(s).sub(mean));
+    const nShow = Math.min(mc.n_show, entry.pool.length);
 
     // the draws. dot size is fixed in mm so exaggerating the spread does not also
     // inflate the dots and hide the structure
     const dotMat = new THREE.MeshStandardMaterial({ color, roughness: 0.5 });
-    for (const s of site.samples) {
+    for (let i = 0; i < nShow; i++) {
       const dot = new THREE.Mesh(unitSphere, dotMat);
       dot.scale.setScalar(0.55);
-      const off = new THREE.Vector3().fromArray(s).sub(mean);
-      entry.offsets.push(off);
-      dot.position.copy(mean).addScaledVector(off, mcScale);
       mcGroup.add(dot);
       entry.sampleMeshes.push(dot);
     }
+    entry.offsets = pickRandom(entry.pool, nShow);
 
     // the group mean, brighter and a touch bigger so it reads through the cloud
     const meanMesh = new THREE.Mesh(
@@ -340,6 +387,171 @@ function addMonteCarlo(mc) {
 
     mcSites.push(entry);
   }
+
+  mcDrawSet = 0;
+  applyMcScale();
+  syncMcDrawUi();
+
+  distData = mc;
+  renderDistances();
+}
+
+// ---- distance histograms -----------------------------------------------------------
+// one small histogram per target, all on the same axis so the sites compare. every
+// draw of the simulation goes in the bars. the draws currently on screen are the
+// ticks along the bottom, so resample visibly redraws a sample from the population
+function renderDistances() {
+  const host = document.getElementById("dist-charts");
+  if (!host) return;
+  host.innerHTML = "";
+  if (!distData) return;
+
+  const key = distMetric === "miss" ? "miss_mm" : "pair_mm";
+  const statsKey = distMetric === "miss" ? "miss_stats" : "pair_stats";
+
+  // shared axis, rounded up to the next half millimetre
+  const xmax = Math.ceil(Math.max(...distData.sites.map((s) => s[statsKey].max_mm)) * 2) / 2 || 1;
+
+  distData.sites.forEach((site, i) => {
+    host.appendChild(distanceChart(site, key, statsKey, xmax, shownDistances(i)));
+  });
+}
+
+// distances for the draws on screen, from the same offsets the dots are drawn with
+function shownDistances(i) {
+  const entry = mcSites[i];
+  const site = distData.sites[i];
+  if (!entry || !site) return [];
+
+  if (distMetric === "miss") {
+    const truth = new THREE.Vector3().fromArray(site.truth);
+    return entry.offsets.map((off) => entry.mean.clone().add(off).distanceTo(truth));
+  }
+  const out = [];
+  for (let k = 0; k + 1 < entry.offsets.length; k += 2) {
+    out.push(entry.offsets[k].distanceTo(entry.offsets[k + 1]));
+  }
+  return out;
+}
+
+function distanceChart(site, key, statsKey, xmax, shown) {
+  const W = 300;
+  const H = 62;
+  const left = 4;
+  const right = 6;
+  const top = 4;
+  const bottom = 16;
+  const plotW = W - left - right;
+  const plotH = H - top - bottom;
+
+  const values = site[key];
+  const st = site[statsKey];
+  const counts = new Array(DIST_BINS).fill(0);
+  for (const v of values) {
+    const b = Math.min(DIST_BINS - 1, Math.floor((v / xmax) * DIST_BINS));
+    counts[b] += 1;
+  }
+  const peak = Math.max(...counts, 1);
+  const x = (mm) => left + (mm / xmax) * plotW;
+
+  const svgNS = "http://www.w3.org/2000/svg";
+  const el = (tag, attrs, parent) => {
+    const n = document.createElementNS(svgNS, tag);
+    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+    if (parent) parent.appendChild(n);
+    return n;
+  };
+
+  const wrap = document.createElement("div");
+  wrap.className = "dist-site";
+
+  // header, text in text colour, identity from the swatch beside it
+  const head = document.createElement("div");
+  head.className = "dist-label";
+  head.innerHTML =
+    `<span class="swatch" style="background:${site.color}"></span>` +
+    `<b>${site.label}</b>` +
+    `<span class="muted">mean ${st.mean_mm.toFixed(2)} &middot; sd ${st.sd_mm.toFixed(2)}` +
+    ` &middot; p95 ${st.p95_mm.toFixed(2)} mm</span>`;
+  wrap.appendChild(head);
+
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, width: W, height: H, class: "dist-svg" });
+
+  // baseline and a recessive tick every millimetre
+  el("line", { x1: left, x2: W - right, y1: top + plotH, y2: top + plotH, class: "axis" }, svg);
+  for (let mm = 0; mm <= xmax; mm += 1) {
+    el("line", { x1: x(mm), x2: x(mm), y1: top + plotH, y2: top + plotH + 3, class: "axis" }, svg);
+    const t = el("text", { x: x(mm), y: H - 3, class: "tick", "text-anchor": "middle" }, svg);
+    t.textContent = `${mm}`;
+  }
+
+  // bars, 2px of surface between neighbours, flat at the baseline
+  const slot = plotW / DIST_BINS;
+  counts.forEach((c, b) => {
+    if (!c) return;
+    const h = (c / peak) * plotH;
+    const bar = el("rect", {
+      x: left + b * slot + 1,
+      y: top + plotH - h,
+      width: Math.max(slot - 2, 1),
+      height: h,
+      fill: site.color,
+      rx: 1.5,
+    }, svg);
+    const lo = ((b * xmax) / DIST_BINS).toFixed(2);
+    const hi = (((b + 1) * xmax) / DIST_BINS).toFixed(2);
+    const title = el("title", {}, bar);
+    title.textContent = `${lo} to ${hi} mm: ${c} of ${values.length} draws (${((100 * c) / values.length).toFixed(1)}%)`;
+  });
+
+  // the draws on screen, as a rug
+  for (const d of shown) {
+    el("line", { x1: x(d), x2: x(d), y1: top + plotH - 7, y2: top + plotH, class: "rug" }, svg);
+  }
+
+  // mean and 95th percentile
+  el("line", { x1: x(st.mean_mm), x2: x(st.mean_mm), y1: top, y2: top + plotH, class: "stat" }, svg);
+  el("line", { x1: x(st.p95_mm), x2: x(st.p95_mm), y1: top, y2: top + plotH, class: "stat dotted" }, svg);
+
+  wrap.appendChild(svg);
+  return wrap;
+}
+
+function setDistMetric(metric) {
+  distMetric = metric;
+  for (const b of document.querySelectorAll("#dist .seg button")) {
+    b.classList.toggle("on", b.dataset.metric === metric);
+  }
+  renderDistances();
+}
+
+// n distinct picks from pool, partial fisher yates so every draw is equally likely
+function pickRandom(pool, n) {
+  const idx = pool.map((_, i) => i);
+  for (let i = 0; i < n; i++) {
+    const j = i + Math.floor(Math.random() * (idx.length - i));
+    [idx[i], idx[j]] = [idx[j], idx[i]];
+  }
+  return idx.slice(0, n).map((k) => pool[k]);
+}
+
+// throw the dots away and draw a fresh random set from the shipped pool. the mean
+// and the ellipsoid stay put, they belong to the whole simulation not to one set
+function resampleMonteCarlo() {
+  if (!mcSites.length) return;
+  for (const site of mcSites) {
+    site.offsets = pickRandom(site.pool, site.sampleMeshes.length);
+  }
+  mcDrawSet += 1;
+  applyMcScale();
+  syncMcDrawUi();
+  renderDistances();
+}
+
+function syncMcDrawUi() {
+  const out = document.getElementById("mc-draw");
+  if (!out) return;
+  out.textContent = mcSites.length ? `set ${mcDrawSet + 1}` : "";
 }
 
 // one factor rescales every offset and every shell radius about the site mean
@@ -484,10 +696,20 @@ function onResize() {
 }
 
 function bindUI() {
-  const toggle = (id, group) =>
-    document.getElementById(id).addEventListener("change", (e) => {
-      group.visible = e.target.checked;
+  // a checkbox that remembers itself. the stored state wins over whatever the html
+  // or the browser think the box should be, then every change is written back
+  const remember = (id, apply) => {
+    const box = document.getElementById(id);
+    box.checked = layerState[id];
+    apply(box.checked);
+    box.addEventListener("change", (e) => {
+      layerState[id] = e.target.checked;
+      saveLayerState(layerState);
+      apply(e.target.checked);
     });
+  };
+
+  const toggle = (id, group) => remember(id, (on) => (group.visible = on));
 
   toggle("toggle-scalp", scalpGroup);
   toggle("toggle-brain", brainGroup);
@@ -519,17 +741,26 @@ function bindUI() {
     applyMcScale();
   });
 
+  document.getElementById("mc-resample").addEventListener("click", resampleMonteCarlo);
+
   const mcPanel = document.getElementById("mc-panel");
-  document.getElementById("toggle-mc").addEventListener("change", (e) => {
-    mcPanel.classList.toggle("dim", !e.target.checked);
-  });
+  const dimPanel = () => mcPanel.classList.toggle("dim", !layerState["toggle-mc"]);
+  dimPanel();
+  document.getElementById("toggle-mc").addEventListener("change", dimPanel);
 
   for (const [id, part] of [
     ["mc-samples", "samples"],
     ["mc-mean", "mean"],
     ["mc-ellipsoid", "ellipsoid"],
   ]) {
-    document.getElementById(id).addEventListener("change", (e) => setMcPart(part, e.target.checked));
+    remember(id, (on) => setMcPart(part, on));
+  }
+
+  // the histogram panel, and which distance it shows
+  const dist = document.getElementById("dist");
+  remember("mc-dist", (on) => dist.classList.toggle("hidden", !on));
+  for (const b of document.querySelectorAll("#dist .seg button")) {
+    b.addEventListener("click", () => setDistMetric(b.dataset.metric));
   }
 
   // zoom bar. the slider drives the camera, and orbit control scrolling drives the
