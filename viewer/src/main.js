@@ -70,6 +70,13 @@ let mcScale = 5;
 let fitDistance = 1;
 let draggingZoom = false;
 
+// zoom scale. 100 always frames the head, 250 is as close as the stops allow and 10
+// is as far out. fixed numbers rather than something derived from head size, so the
+// readout means the same thing on every subject
+const ZOOM_MIN = 10;
+const ZOOM_FIT = 100;
+const ZOOM_MAX = 250;
+
 // unit spheres, scaled per marker so the slider just changes scale
 const unitSphere = new THREE.SphereGeometry(1, 20, 14);
 let targetRadius = 2.5; // mm
@@ -383,39 +390,59 @@ function frameCamera(geo) {
   // bounding sphere radius keeps the near plane outside the scalp
   fitDistance = dist;
   controls.minDistance = radius * 1.02;
-  controls.maxDistance = dist * 3.0;
+  controls.maxDistance = dist * 2.0;
   controls.update();
 
-  syncZoomUi(true);
+  syncZoomUi();
 }
 
 // ---- zoom -----------------------------------------------------------------------
-// zoom is expressed as a percentage of the framing distance, so bigger number means
-// closer, the way a document zoom reads
+// the slider is pinned to 10..250 on every subject, but the two ends are different
+// physical distances on a big head and a small one, so percent maps onto distance by
+// interpolating between the three anchors: 10 at maxDistance, 100 at the framing
+// distance, 250 at minDistance. the interpolation runs in log distance, so equal
+// slider steps are equal ratios and the motion feels even rather than crawling at one
+// end and lurching at the other
+function zoomToDistance(pct) {
+  pct = Math.min(Math.max(pct, ZOOM_MIN), ZOOM_MAX);
+  const logFit = Math.log(fitDistance);
+
+  if (pct >= ZOOM_FIT) {
+    const t = (pct - ZOOM_FIT) / (ZOOM_MAX - ZOOM_FIT);
+    return Math.exp(logFit + t * (Math.log(controls.minDistance) - logFit));
+  }
+  const t = (ZOOM_FIT - pct) / (ZOOM_FIT - ZOOM_MIN);
+  return Math.exp(logFit + t * (Math.log(controls.maxDistance) - logFit));
+}
+
+function distanceToZoom(dist) {
+  const logFit = Math.log(fitDistance);
+  const logD = Math.log(dist);
+
+  if (logD <= logFit) {
+    const span = logFit - Math.log(controls.minDistance);
+    const t = span > 0 ? (logFit - logD) / span : 0;
+    return ZOOM_FIT + t * (ZOOM_MAX - ZOOM_FIT);
+  }
+  const span = Math.log(controls.maxDistance) - logFit;
+  const t = span > 0 ? (logD - logFit) / span : 0;
+  return ZOOM_FIT - t * (ZOOM_FIT - ZOOM_MIN);
+}
+
 function zoomPercent() {
-  return (fitDistance / camera.position.distanceTo(controls.target)) * 100;
+  return distanceToZoom(camera.position.distanceTo(controls.target));
 }
 
 function setZoomPercent(pct) {
-  const dist = Math.min(
-    Math.max(fitDistance / (pct / 100), controls.minDistance),
-    controls.maxDistance
-  );
   const dir = camera.position.clone().sub(controls.target).normalize();
-  camera.position.copy(controls.target).addScaledVector(dir, dist);
+  camera.position.copy(controls.target).addScaledVector(dir, zoomToDistance(pct));
   controls.update();
 }
 
-function syncZoomUi(rescale = false) {
+function syncZoomUi() {
   const slider = document.getElementById("zoom-slider");
   const out = document.getElementById("zoom-val");
   if (!slider || !out) return;
-
-  if (rescale) {
-    // the stops move with the head size, so the slider ends have to move with them
-    slider.min = Math.ceil((fitDistance / controls.maxDistance) * 100);
-    slider.max = Math.floor((fitDistance / controls.minDistance) * 100);
-  }
 
   const pct = Math.round(zoomPercent());
   if (!draggingZoom) slider.value = pct;
@@ -512,9 +539,18 @@ function bindUI() {
   window.addEventListener("pointerup", () => (draggingZoom = false));
   zoomSlider.addEventListener("input", (e) => setZoomPercent(Number(e.target.value)));
 
-  const step = (factor) => setZoomPercent(zoomPercent() * factor);
-  document.getElementById("zoom-in").addEventListener("click", () => step(1.25));
-  document.getElementById("zoom-out").addEventListener("click", () => step(1 / 1.25));
+  // buttons land on round multiples of 25 so clicking walks 100, 125, 150 and so on.
+  // the epsilon matters, zoomPercent comes back from a log round trip so a reading
+  // that should be exactly 200 arrives as 200.0000000001, and a bare ceil then sends
+  // the step back to where it started instead of down one
+  const step = (dir) => {
+    const idx = zoomPercent() / 25;
+    const eps = 1e-6;
+    const next = 25 * (dir > 0 ? Math.floor(idx + eps) + 1 : Math.ceil(idx - eps) - 1);
+    setZoomPercent(Math.min(Math.max(next, ZOOM_MIN), ZOOM_MAX));
+  };
+  document.getElementById("zoom-in").addEventListener("click", () => step(1));
+  document.getElementById("zoom-out").addEventListener("click", () => step(-1));
   document.getElementById("zoom-val").addEventListener("click", () => setZoomPercent(100));
 
   controls.addEventListener("change", () => syncZoomUi());
