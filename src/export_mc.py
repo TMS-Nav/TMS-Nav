@@ -68,7 +68,7 @@ def monte_carlo_cloud(landmarks, targets, dims=NOMINAL_DIMS, noise=None,
 
     sites = []
     for t in targets:
-        key = t.label  # viewer labels are SMA, F3, F4, C3, C4, same as the model names
+        key = t.label  # viewer labels are SMA, F4, C3, C4, Cz, same as the model names
         if key not in samples:
             continue
 
@@ -98,10 +98,16 @@ def monte_carlo_cloud(landmarks, targets, dims=NOMINAL_DIMS, noise=None,
         miss = miss_distances(pts, ideal)
         pair = pair_distances(pts, rng)
 
+        # and the centroid offset, how far the middle of the cloud sits from the
+        # mri target. the systematic part of the miss, the rest is spread
+        bias = float(np.linalg.norm(mean - ideal))
+
         sites.append({
             "name": t.name,
             "label": t.label,
             "color": t.color,
+            "optional": bool(getattr(t, "optional", False)),
+            "bias_mm": round(bias, 3),
             "truth": _vec(ideal),
             "mean": _vec(mean),
             "sigmas": _vec(sigmas),

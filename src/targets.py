@@ -16,15 +16,20 @@ class Target:
     aim: tuple = None
     contact: np.ndarray = None
     normal: np.ndarray = None
+    optional: bool = False   # placed only when a fifth fiducial is available
 
 
-# aim directions in RAS, x is R+, y is A+, z is S+
+# the marker set from the acquisition protocol, in its priority order. sma and f4
+# are the therapeutic targets, c3 and c4 the motor references, cz the midline
+# reference and the one to drop when only four fiducials are available. f3 is
+# out, the stimulation protocol uses the right dlpfc. aim directions in RAS, x is
+# R+, y is A+, z is S+
 TARGET_SPECS = [
-    Target("SMA", "SMA", "#d62728", (0.0, 0.15, 1.0)),         # about the vertex, cz
-    Target("L-DLPFC", "F3", "#2ca02c", (-0.55, 1.0, 0.35)),    # forehead left, f3
-    Target("R-DLPFC", "F4", "#ff7f0e", (0.55, 1.0, 0.35)),     # forehead right, f4
-    Target("L-M1", "C3", "#9467bd", (-0.9, -0.1, 0.5)),        # motor strip left, c3
-    Target("R-M1", "C4", "#8c564b", (0.9, -0.1, 0.5)),         # motor strip right, c4
+    Target("SMA", "SMA", "#d62728", (0.0, 0.15, 1.0)),                    # ahead of the vertex
+    Target("R-DLPFC", "F4", "#ff7f0e", (0.55, 1.0, 0.35)),                # forehead right
+    Target("L-M1", "C3", "#9467bd", (-0.9, -0.1, 0.5)),                   # motor strip left
+    Target("R-M1", "C4", "#8c564b", (0.9, -0.1, 0.5)),                    # motor strip right
+    Target("Cz", "Cz", "#2ca02c", (0.0, 0.0, 1.0), optional=True),        # vertex
 ]
 
 # one accent color for all the eeg landmarks
@@ -32,12 +37,13 @@ LANDMARK_COLOR = "#f2c14e"
 
 
 def standard_targets(surf):
-    """The 5 stimulation targets as points on the scalp."""
+    """The protocol markers as points on the scalp, protocol priority order."""
 
     out = []
     for spec in TARGET_SPECS:
         contact, normal, _ = scalp_target(surf, spec.aim)
-        out.append(Target(spec.name, spec.label, spec.color, spec.aim, contact, normal))
+        out.append(Target(spec.name, spec.label, spec.color, spec.aim, contact, normal,
+                          optional=spec.optional))
     return out
 
 

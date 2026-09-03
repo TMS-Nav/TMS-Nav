@@ -8,7 +8,7 @@ COIL_COLOR = "#1f77b4"
 # camera directions in RAS, where the eye sits relative to the head
 VIEW_DIRS = {
     "front": (0.0, 1.0, 0.5),    # face on, a little up
-    "side": (-1.0, 0.2, 0.3),    # from the left, where the coil sits
+    "side": (1.0, 0.4, 0.3),     # from the right, where the coil sits over f4
 }
 
 

@@ -38,6 +38,7 @@ def _marker_json(m):
         "name": m.name,
         "label": m.label,
         "color": m.color,
+        "optional": bool(getattr(m, "optional", False)),
         "position": _vec(m.contact),
         "normal": _vec(m.normal),
     }

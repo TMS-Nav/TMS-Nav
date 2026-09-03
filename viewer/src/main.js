@@ -170,7 +170,7 @@ async function loadDataset(key) {
   addBrain(brainGeo);
   addCoil(coilGeo);
   addTargets(ds.markers.targets);
-  addLandmarks(ds.markers.landmarks);
+  addLandmarks(ds.markers.landmarks, ds.markers.targets);
   if (ds.monteCarlo) addMonteCarlo(ds.monteCarlo);
   frameCamera(scalpGeo);
 
@@ -270,24 +270,33 @@ function addCoil(geo) {
 }
 
 function addTargets(targets) {
-  // small black dots at the 5 stimulation sites, size driven by the slider
+  // small black dots at the protocol markers, size driven by the slider. an
+  // optional marker, cz, is drawn see-through and says so on its label
   for (const t of targets) {
     const mesh = new THREE.Mesh(
       unitSphere,
-      new THREE.MeshStandardMaterial({ color: TARGET_COLOR, roughness: 0.6 })
+      new THREE.MeshStandardMaterial({
+        color: TARGET_COLOR,
+        roughness: 0.6,
+        transparent: !!t.optional,
+        opacity: t.optional ? 0.45 : 1.0,
+      })
     );
     mesh.position.fromArray(t.position);
     mesh.scale.setScalar(targetRadius);
     mesh.userData.marker = t;
     targetGroup.add(mesh);
     targetMeshes.push(mesh);
-    addLabel(mesh, t.label);
+    addLabel(mesh, t.optional ? `${t.label} (optional)` : t.label);
   }
 }
 
-function addLandmarks(landmarks) {
-  // eeg registration points, one accent color, a touch bigger and fixed size
+function addLandmarks(landmarks, targets = []) {
+  // eeg registration points, one accent color, a touch bigger and fixed size.
+  // cz is both a registration point and a marker, drawn once, as the marker
+  const taken = new Set(targets.map((t) => t.label));
   for (const m of landmarks) {
+    if (taken.has(m.label)) continue;
     const mesh = new THREE.Mesh(
       unitSphere,
       new THREE.MeshStandardMaterial({ color: new THREE.Color(m.color), roughness: 0.6 })
@@ -436,11 +445,11 @@ function shownDistances(i) {
 
 function distanceChart(site, key, statsKey, xmax, shown) {
   const W = 300;
-  const H = 62;
+  const H = 88;
   const left = 4;
   const right = 6;
   const top = 4;
-  const bottom = 16;
+  const bottom = 18;
   const plotW = W - left - right;
   const plotH = H - top - bottom;
 
@@ -471,8 +480,8 @@ function distanceChart(site, key, statsKey, xmax, shown) {
   head.innerHTML =
     `<span class="swatch" style="background:${site.color}"></span>` +
     `<b>${site.label}</b>` +
-    `<span class="muted">mean ${st.mean_mm.toFixed(2)} &middot; sd ${st.sd_mm.toFixed(2)}` +
-    ` &middot; p95 ${st.p95_mm.toFixed(2)} mm</span>`;
+    (site.optional ? `<span class="muted">(optional)</span>` : "") +
+    `<span class="stats">mean ${st.mean_mm.toFixed(1)} &middot; p95 ${st.p95_mm.toFixed(1)} mm</span>`;
   wrap.appendChild(head);
 
   const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, width: W, height: H, class: "dist-svg" });
@@ -506,7 +515,7 @@ function distanceChart(site, key, statsKey, xmax, shown) {
 
   // the draws on screen, as a rug
   for (const d of shown) {
-    el("line", { x1: x(d), x2: x(d), y1: top + plotH - 7, y2: top + plotH, class: "rug" }, svg);
+    el("line", { x1: x(d), x2: x(d), y1: top + plotH - 9, y2: top + plotH, class: "rug" }, svg);
   }
 
   // mean and 95th percentile

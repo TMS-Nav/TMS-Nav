@@ -32,7 +32,7 @@ EQ_MARGIN = 2.0   # mm, how close counts as equivalent
 
 # the two study targets. f3 is the dlpfc proxy from herwig 2003, sma is the midline
 # point in front of cz used by the mantovani 2010 protocol
-STUDY_SITES = ["F3", "SMA"]
+STUDY_SITES = ["F4", "SMA"]
 
 # normal sd as a fraction of tangent sd. bone stops you pressing in, skin does not
 # stop you sliding, so the error blob is a flattened disc rather than a ball
@@ -260,23 +260,23 @@ def main():
               f" {sn**2:7.2f}  {sn / max(s1, 1e-9):5.2f}")
     print("  (sd_t1/sd_t2 are the two tangent directions, sd_n is the normal.)")
     print()
-    print(f"  the pen alone was told to draw at ratio {RATIO}. F3 comes back near that,")
+    print(f"  the pen alone was told to draw at ratio {RATIO}. F4 comes back near that,")
     print("  but Cz and T3 come back near 1.0, and that is not a bug. getting the head")
     print("  SIZE wrong moves a site straight in or out along its own normal, and at the")
     print("  vertex and the ears that is exactly where the size error points. so the")
     print("  head model piles extra variance onto the normal direction at those sites")
-    print("  and the blob rounds out. F3 sits on a slope, so its size error is mostly")
+    print("  and the blob rounds out. F4 sits on a slope, so its size error is mostly")
     print("  tangential there and the disc stays flat.")
 
     # --- does the spread scale the way it should ------------------------------------
     print()
-    print("displacement rms at F3 against landmark sd, should be a straight line:")
+    print("displacement rms at F4 against landmark sd, should be a straight line:")
     for sd in (0.2, 0.5, 1.0, 2.0):
         sweep = NoiseModel(landmark_tangent=sd, landmark_normal=sd * RATIO,
                            mark_tangent=sd, mark_normal=sd * RATIO, tape=0.0)
         _, s = simulate(TRUE_DIMS, sweep, 400, rng)
-        r = float(np.sqrt((displacements(s["F3"], truth["F3"]) ** 2).mean()))
-        print(f"  landmark sd {sd:4.1f} mm  ->  F3 rms {r:6.2f} mm   ratio {r / sd:6.2f}")
+        r = float(np.sqrt((displacements(s["F4"], truth["F4"]) ** 2).mean()))
+        print(f"  landmark sd {sd:4.1f} mm  ->  F4 rms {r:6.2f} mm   ratio {r / sd:6.2f}")
 
     # --- the number that feeds sample_size.py ----------------------------------------
     print()
@@ -289,9 +289,9 @@ def main():
     # rms, not sd. sample_size.py combines the two error sources in quadrature,
     # spread = sqrt(capError**2 + navError**2), which is an rms combination, so the
     # thing that belongs in capError is the rms miss and not the scatter about it
-    sigma = float(tolerance_region(samples["F3"], truth["F3"])["rms_mm"])
+    sigma = float(tolerance_region(samples["F4"], truth["F4"])["rms_mm"])
     print()
-    print(f"capError to carry into sample_size.py, rms miss at F3: {sigma:.2f} mm")
+    print(f"capError to carry into sample_size.py, rms miss at F4: {sigma:.2f} mm")
     print(" this now covers measuring the head AND drawing the mark on it. it lands in")
     print(" the middle of the old guessed sweep [1.0, 2.0, 2.5], so the guess was sound,")
     print(" it just had no evidence under it. still not in here: the coil being held off")

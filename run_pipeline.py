@@ -28,9 +28,10 @@ REGISTRY_PATH = Path("viewer") / "src" / "datasetRegistry.js"
 
 GAP_MM = 2.0
 
-# where the coil sits, out on the left side around c3. kept low and lateral so
-# it clears the 3 markers instead of covering the vertex one
-COIL_AIM = (-1.0, -0.15, 0.6)
+# where the demo coil sits. the protocol records coil poses at sma and f4, and f4
+# is the one off the midline, so the coil is centred over f4 the way the operator
+# would place it
+COIL_AIM = (0.55, 1.0, 0.35)
 
 VIEWS = ["front", "side"]
 
@@ -127,9 +128,11 @@ def main():
         for site in mc["sites"]:
             sig = ", ".join(f"{v:.2f}" for v in site["sigmas"])
             m, q = site["miss_stats"], site["pair_stats"]
+            opt = " (optional)" if site.get("optional") else ""
             print(f"  {site['label']:4s} to target mean {m['mean_mm']:.2f} sd {m['sd_mm']:.2f}"
-                  f" p95 {m['p95_mm']:.2f} mm | between placements mean {q['mean_mm']:.2f}"
-                  f" p95 {q['p95_mm']:.2f} mm | sigmas {sig}")
+                  f" p95 {m['p95_mm']:.2f} mm, centroid off {site['bias_mm']:.2f} mm"
+                  f" | between placements mean {q['mean_mm']:.2f}"
+                  f" p95 {q['p95_mm']:.2f} mm | sigmas {sig}{opt}")
 
         # the distributions themselves, as a figure next to the previews
         fig = render_distance_hist(mc, PREVIEW_DIR / f"{scene.name}_distances.png", subject=scene.name)

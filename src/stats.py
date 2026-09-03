@@ -76,8 +76,9 @@ def render_distance_hist(mc, out_path, subject="", bins=30):
             ax.axvline(st["mean_mm"], color="#333333", lw=1.0)
             ax.axvline(st["p95_mm"], color="#333333", lw=1.0, ls=(0, (1, 2)))
 
+            opt = "  (optional marker)" if site.get("optional") else ""
             ax.set_title(
-                f"{site['label']}   mean {st['mean_mm']:.2f} mm   sd {st['sd_mm']:.2f}"
+                f"{site['label']}{opt}   mean {st['mean_mm']:.2f} mm   sd {st['sd_mm']:.2f}"
                 f"   p95 {st['p95_mm']:.2f}   n={st['n']}",
                 fontsize=9, loc="left", color="#333333")
             ax.set_yticks([])
