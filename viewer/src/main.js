@@ -65,6 +65,11 @@ const targetMeshes = []; // held onto for the variability slider
 const mcSites = []; // { mean, sampleMeshes[], meanMesh, shellMeshes[] }
 let mcScale = 5;
 
+// camera distance that exactly frames the current head. 100% zoom means this, so
+// every subject reads as 100% when you switch to it no matter how big their head is
+let fitDistance = 1;
+let draggingZoom = false;
+
 // unit spheres, scaled per marker so the slider just changes scale
 const unitSphere = new THREE.SphereGeometry(1, 20, 14);
 let targetRadius = 2.5; // mm
@@ -372,7 +377,49 @@ function frameCamera(geo) {
   camera.near = radius / 100;
   camera.far = radius * 100;
   camera.updateProjectionMatrix();
+
+  // scroll stops: never inside the skull, never off into the void. minDistance is
+  // measured from the orbit target at the middle of the head, so a hair over the
+  // bounding sphere radius keeps the near plane outside the scalp
+  fitDistance = dist;
+  controls.minDistance = radius * 1.02;
+  controls.maxDistance = dist * 3.0;
   controls.update();
+
+  syncZoomUi(true);
+}
+
+// ---- zoom -----------------------------------------------------------------------
+// zoom is expressed as a percentage of the framing distance, so bigger number means
+// closer, the way a document zoom reads
+function zoomPercent() {
+  return (fitDistance / camera.position.distanceTo(controls.target)) * 100;
+}
+
+function setZoomPercent(pct) {
+  const dist = Math.min(
+    Math.max(fitDistance / (pct / 100), controls.minDistance),
+    controls.maxDistance
+  );
+  const dir = camera.position.clone().sub(controls.target).normalize();
+  camera.position.copy(controls.target).addScaledVector(dir, dist);
+  controls.update();
+}
+
+function syncZoomUi(rescale = false) {
+  const slider = document.getElementById("zoom-slider");
+  const out = document.getElementById("zoom-val");
+  if (!slider || !out) return;
+
+  if (rescale) {
+    // the stops move with the head size, so the slider ends have to move with them
+    slider.min = Math.ceil((fitDistance / controls.maxDistance) * 100);
+    slider.max = Math.floor((fitDistance / controls.minDistance) * 100);
+  }
+
+  const pct = Math.round(zoomPercent());
+  if (!draggingZoom) slider.value = pct;
+  out.textContent = `${pct}%`;
 }
 
 function onClick(event) {
@@ -457,6 +504,20 @@ function bindUI() {
   ]) {
     document.getElementById(id).addEventListener("change", (e) => setMcPart(part, e.target.checked));
   }
+
+  // zoom bar. the slider drives the camera, and orbit control scrolling drives the
+  // slider back, so the two never disagree
+  const zoomSlider = document.getElementById("zoom-slider");
+  zoomSlider.addEventListener("pointerdown", () => (draggingZoom = true));
+  window.addEventListener("pointerup", () => (draggingZoom = false));
+  zoomSlider.addEventListener("input", (e) => setZoomPercent(Number(e.target.value)));
+
+  const step = (factor) => setZoomPercent(zoomPercent() * factor);
+  document.getElementById("zoom-in").addEventListener("click", () => step(1.25));
+  document.getElementById("zoom-out").addEventListener("click", () => step(1 / 1.25));
+  document.getElementById("zoom-val").addEventListener("click", () => setZoomPercent(100));
+
+  controls.addEventListener("change", () => syncZoomUi());
 
   renderer.domElement.addEventListener("click", onClick);
   window.addEventListener("resize", onResize);

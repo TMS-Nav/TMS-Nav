@@ -7,13 +7,26 @@ from scipy.spatial import cKDTree
 from src.skull_boundary import classify_head_voxels
 
 
+def voxel_sizes(affine):
+    """Physical size of one voxel along each index axis, mm.
+
+    the column norms, not the diagonal. these scans come in oblique, so the diagonal
+    is near zero and reading spacing off it gives nonsense
+    """
+
+    return np.linalg.norm(np.asarray(affine)[:3, :3], axis=0)
+
+
 def scalp_surface(volume, affine, smooth_sigma=1.0, smooth_iters=30):
     """Outer scalp as a pyvista mesh, points in RAS mm."""
 
     head_mask = classify_head_voxels(volume)
 
-    # blur first or marching cubes gives back a voxel staircase
-    field = ndimage.gaussian_filter(head_mask.astype(np.float32), sigma=smooth_sigma)
+    # blur first or marching cubes gives back a voxel staircase. sigma is in mm, so
+    # divide by the voxel size per axis, otherwise an anisotropic scan gets blurred
+    # harder along its thin axis than its thick one
+    sigma_vox = smooth_sigma / voxel_sizes(affine)
+    field = ndimage.gaussian_filter(head_mask.astype(np.float32), sigma=sigma_vox)
 
     # vtk wants fortran order so x runs fastest
     grid = pv.ImageData(dimensions=field.shape, spacing=(1, 1, 1), origin=(0, 0, 0))
@@ -51,8 +64,11 @@ def brain_surface(volume, affine, erode_mm=12, smooth_sigma=1.5, smooth_iters=40
 
     head_mask = ndimage.binary_fill_holes(classify_head_voxels(volume))
 
-    # pull in ~12 mm to clear scalp and skull, 1 mm voxels so iters == mm
-    inner = ndimage.binary_erosion(head_mask, iterations=int(erode_mm))
+    # pull in erode_mm to clear scalp and skull. binary_erosion counts voxels, not
+    # mm, so on a 1 x 1 x 1.2 mm scan it would eat 12 mm two ways and 14.4 the third.
+    # the distance transform knows the real spacing, so the shell comes off evenly
+    vox = voxel_sizes(affine)
+    inner = ndimage.distance_transform_edt(head_mask, sampling=vox) > erode_mm
 
     # erosion can leave little islands, keep the biggest lump
     labeled, num = ndimage.label(inner)
@@ -60,7 +76,7 @@ def brain_surface(volume, affine, erode_mm=12, smooth_sigma=1.5, smooth_iters=40
         sizes = ndimage.sum(inner, labeled, range(1, num + 1))
         inner = labeled == (1 + int(np.argmax(sizes)))
 
-    field = ndimage.gaussian_filter(inner.astype(np.float32), sigma=smooth_sigma)
+    field = ndimage.gaussian_filter(inner.astype(np.float32), sigma=smooth_sigma / vox)
     grid = pv.ImageData(dimensions=field.shape, spacing=(1, 1, 1), origin=(0, 0, 0))
     grid.point_data["brain"] = field.flatten(order="F")
 

@@ -147,7 +147,7 @@ input[type="range"] {
 
 #info {
   position: absolute;
-  bottom: 16px;
+  bottom: 62px;
   right: 16px;
   padding: 12px 16px;
   background: rgba(28, 30, 36, 0.92);
@@ -196,4 +196,46 @@ input[type="range"] {
   line-height: 1.45;
   /* the note is built with newlines, pre-line is what makes them break */
   white-space: pre-line;
+}
+
+/* zoom bar, bottom right. same flat dark panel as everything else */
+#zoom {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(28, 30, 36, 0.92);
+  border: 1px solid #3a3d46;
+  border-radius: 8px;
+}
+
+#zoom button {
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1;
+  color: #9aa0aa;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 3px 4px;
+  border-radius: 4px;
+}
+
+#zoom button:hover {
+  color: #e8eaed;
+  background: #33363f;
+}
+
+/* the readout doubles as a reset, same as the zoom box in word */
+#zoom-val {
+  min-width: 46px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+#zoom-slider {
+  width: 116px;
 }
