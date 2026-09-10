@@ -53,6 +53,12 @@ class NoiseModel:
     # sd on each of the three tape readings, mm. slip, tension, reading to the mm
     tape: float = 1.0
 
+    # --- holding the coil, degrees ------------------------------------------------
+    # the handle is turned about the coil normal by eye against the sop rule, and a
+    # hand held coil comes back a few degrees off each time. the tilt of the coil
+    # face is not a parameter, it follows from the mark being off on a curved head
+    coil_yaw: float = 5.0
+
     # "gaussian" or "box". box is the literal reading of the meeting note, gaussian is
     # the default because a box has no tails and makes the 95% region ill defined
     shape: str = "gaussian"
@@ -171,13 +177,16 @@ def draw_dimensions(true_axes, noise, rng):
     return HeadDimensions(nasion_inion=float(ni), lpa_rpa=float(lr), circumference=float(circ))
 
 
-def simulate_caps(true_dims, noise, n_draws, rng):
+def simulate_caps(true_dims, noise, n_draws, rng, with_yaw=False):
     """Rebuild the whole cap n_draws times. Returns the truth and one array per site.
 
     two stages per draw. first the head gets measured badly and the cap is rebuilt
     from those readings, then the target actually gets drawn on the scalp and the pen
     misses too. the second stage is what gives the cloud its third dimension, without
     it a reconstructed nasion can only ever move along one axis.
+
+    with_yaw also returns one handle rotation per draw per site, degrees, the third
+    stage where the coil is set down on the mark and turned by eye
     """
 
     truth = electrode_positions(true_dims)
@@ -192,7 +201,11 @@ def simulate_caps(true_dims, noise, n_draws, rng):
         draws.append({k: perturb_mark(true_axes, v, noise, rng) for k, v in sites.items()})
 
     samples = {name: np.array([d[name] for d in draws]) for name in truth}
-    return truth, samples
+    if not with_yaw:
+        return truth, samples
+
+    yaws = {name: _draw(noise.coil_yaw, noise.shape, rng, n_draws) for name in truth}
+    return truth, samples, yaws
 
 
 if __name__ == "__main__":

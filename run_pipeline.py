@@ -2,6 +2,7 @@
 # coil on it, save front and side previews for each into saves/previews. this is
 # the sanity check view, the real showcase will be three.js later off the scene
 import sys
+import zlib
 from pathlib import Path
 
 import numpy as np
@@ -120,19 +121,27 @@ def main():
         web = export_web(scene, VIEWER_DATA_DIR / scene.name)
         print(f"wrote {web}")
 
-        # and the monte carlo cloud that sits on top of the targets
-        mc_path, mc = export_monte_carlo(scene, VIEWER_DATA_DIR / scene.name)
+        # and the monte carlo cloud that sits on top of the targets. the seed comes
+        # off the subject name, so each subject is its own independent run of the
+        # cap procedure and the run is still reproducible file by file
+        seed = zlib.crc32(scene.name.encode())
+        mc_path, mc = export_monte_carlo(scene, VIEWER_DATA_DIR / scene.name, seed=seed)
         print(f"wrote {mc_path}")
         print(f"  registered onto the subject, scale {mc['fit_scale']:.3f},"
               f" landmark residual {mc['fit_residual_mm']:.1f} mm")
         for site in mc["sites"]:
-            sig = ", ".join(f"{v:.2f}" for v in site["sigmas"])
             m, q = site["miss_stats"], site["pair_stats"]
+            a, o = site["tilt_stats"], site["orient_stats"]
             opt = " (optional)" if site.get("optional") else ""
-            print(f"  {site['label']:4s} to target mean {m['mean_mm']:.2f} sd {m['sd_mm']:.2f}"
-                  f" p95 {m['p95_mm']:.2f} mm, centroid off {site['bias_mm']:.2f} mm"
-                  f" | between placements mean {q['mean_mm']:.2f}"
-                  f" p95 {q['p95_mm']:.2f} mm | sigmas {sig}{opt}")
+            print(f"  {site['label']:4s} to target mean {m['mean']:.2f} sd {m['sd']:.2f}"
+                  f" p95 {m['p95']:.2f} mm, centroid off {site['bias_mm']:.2f} mm"
+                  f" | between placements mean {q['mean']:.2f} p95 {q['p95']:.2f} mm"
+                  f" | tilt mean {a['mean']:.2f} p95 {a['p95']:.2f} deg"
+                  f" | orientation mean {o['mean']:.2f} p95 {o['p95']:.2f} deg{opt}")
+            ba = site["bland_altman"]
+            print("       bland altman  " + "  ".join(
+                f"{k} {v['bias']:+.2f} [{v['loa_lo']:+.2f}, {v['loa_hi']:+.2f}]"
+                for k, v in ba.items()) + " mm")
 
         # the distributions themselves, as a figure next to the previews
         fig = render_distance_hist(mc, PREVIEW_DIR / f"{scene.name}_distances.png", subject=scene.name)

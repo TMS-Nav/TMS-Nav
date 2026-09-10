@@ -2,16 +2,22 @@
 
 import math
 
+import sys
+from pathlib import Path
+
 import numpy as np
 from scipy import stats
 
-# in mm
-navError = 0.75 # "neuronavigation error, brainsights own localization/registration noise"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from src.stats import BIAS_MM, EQ_MARGIN_MM, NAV_TRE_MM  # noqa: E402
+
+# in mm. the thresholds live in src/stats.py so every script uses the same ones
+navError = NAV_TRE_MM # "neuronavigation error, brainsights own localization/registration noise"
 # double check navError against the brainsight manual
 
 # thresholds
-bias = 1.5 # smallest average offset (for t-test)
-eqMargin = 2.0 # size of difference to be equiavlent (for one sided test)
+bias = BIAS_MM # smallest average offset (for t-test)
+eqMargin = EQ_MARGIN_MM # size of difference to be equiavlent (for one sided test)
 LOAPrec = 1.0 # limit of agreement precision (for Bland-Altman)
 
 # cap drawing error. 1.55 is the measured one out of analysis/head_model_mc.py, the old

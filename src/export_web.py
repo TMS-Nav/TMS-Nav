@@ -5,6 +5,8 @@ from pathlib import Path
 
 import numpy as np
 
+from src.stats import BIAS_MM, EQ_MARGIN_DEG, EQ_MARGIN_MM, subject_test, subject_tost
+
 
 def export_web(scene, out_dir):
     """Write the meshes and markers.json for one subject."""
@@ -67,7 +69,15 @@ def write_registry(data_dir, registry_path):
     if not subjects:
         raise ValueError(f"no processed subjects found under {data_dir}")
 
-    imports, entries = [], []
+    # the subject level summary, one number per subject per target, and the tests
+    # that run on those numbers. rebuilt from the per subject json so it always
+    # matches what is on disk
+    group = group_summary(data_dir, subjects)
+    with open(data_dir / "group.json", "w") as f:
+        json.dump(group, f, indent=2)
+
+    imports = ['import GROUP_DATA from "./data/group.json";']
+    entries = []
     for i, name in enumerate(subjects):
         # the folder name is whatever the mri was called, so it can be anything.
         # keep it verbatim as the label and the key, and use a safe made up
@@ -98,7 +108,95 @@ def write_registry(data_dir, registry_path):
         + "\n".join(imports)
         + "\n\nexport const DATASETS = {\n"
         + "\n".join(entries)
-        + "\n};\n"
+        + "\n};\n\n"
+        # the subject level summary, see group_summary below
+        + "export const GROUP = GROUP_DATA;\n"
     )
     registry_path.write_text(text, encoding="utf-8")
     return registry_path, subjects
+
+
+# per target, what each subject contributes and what the tests say over subjects.
+# the number per subject is the mean of that subject's draws, so a subject is one
+# row, and n in every test below is the number of rows. with the stand in scans
+# every subject shares the nominal head model and differs only by the registration
+# scale, so this is the wiring of the analysis, not a result
+GROUP_METRICS = [
+    # json key, stats key, unit, null for the t test, tost margin. the orientation
+    # difference is a magnitude with no agreed bias threshold, so it gets the tost
+    # and the ci only, a t test against zero on a magnitude would always reject
+    ("miss", "miss_stats", "mm", BIAS_MM, EQ_MARGIN_MM),
+    ("orient", "orient_stats", "deg", None, EQ_MARGIN_DEG),
+]
+
+
+def group_summary(data_dir, subjects):
+    data_dir = Path(data_dir)
+    per_subject = {}
+    for name in subjects:
+        with open(data_dir / name / "montecarlo.json") as f:
+            per_subject[name] = json.load(f)
+
+    labels = []
+    for mc in per_subject.values():
+        for site in mc["sites"]:
+            if site["label"] not in labels:
+                labels.append(site["label"])
+
+    targets = []
+    for label in labels:
+        rows = []
+        for name, mc in per_subject.items():
+            site = next((s for s in mc["sites"] if s["label"] == label), None)
+            if site is None:
+                continue
+            rows.append({
+                "subject": name,
+                "miss": site["miss_stats"]["mean"],
+                "rms": site["miss_stats"]["rms"],
+                "pair": site["pair_stats"]["mean"],
+                "tilt": site["tilt_stats"]["mean"],
+                "orient": site["orient_stats"]["mean"],
+                "bias": site["bias_mm"],
+            })
+
+        tests = {}
+        for key, _, unit, mu0, margin in GROUP_METRICS:
+            values = [r[key] for r in rows]
+            if len(values) < 2:
+                tests[key] = {"n": len(values), "unit": unit, "note": "need 2 subjects"}
+                continue
+            # mu0 only matters for t and p, the mean and ci are the same either way
+            tt = subject_test(values, mu0=mu0 if mu0 is not None else 0.0)
+            eq = subject_tost(values, margin=margin)
+            tests[key] = {
+                "n": tt["n"],
+                "unit": unit,
+                "mean": round(tt["mean"], 3),
+                "sd": round(tt["sd"], 3),
+                "ci95": [round(v, 3) for v in tt["ci"]],
+                "t_mu0": mu0,
+                "t": round(tt["t"], 3) if mu0 is not None else None,
+                "p": round(tt["p"], 4) if mu0 is not None else None,
+                "margin": margin,
+                "ci90": [round(v, 3) for v in eq["ci90"]],
+                "p_tost": round(eq["p"], 4),
+                "equivalent": eq["equivalent"],
+            }
+
+        first = next(s for mc in per_subject.values() for s in mc["sites"] if s["label"] == label)
+        targets.append({
+            "label": label,
+            "name": first["name"],
+            "color": first["color"],
+            "optional": bool(first.get("optional", False)),
+            "rows": rows,
+            "tests": tests,
+        })
+
+    return {
+        "n_subjects": len(subjects),
+        "subjects": list(subjects),
+        "stand_in": True,
+        "targets": targets,
+    }

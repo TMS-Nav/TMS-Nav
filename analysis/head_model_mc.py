@@ -20,15 +20,22 @@ from src.landmark_noise import (  # noqa: E402
     simulate_caps,
     tangent_basis,
 )
+from src.stats import (  # noqa: E402
+    BIAS_MM,
+    EQ_MARGIN_MM,
+    NAV_TRE_MM,
+    subject_test,
+    subject_tost,
+)
 from src.ten_twenty import HeadDimensions, electrode_positions, fit_ellipsoid  # noqa: E402
 
 # a typical adult head, mm. nasion to inion over the vertex, ear to ear over the
 # vertex, and round through nasion and inion
 TRUE_DIMS = HeadDimensions(nasion_inion=360.0, lpa_rpa=350.0, circumference=570.0)
 
-# thresholds, straight out of analysis/sample_size.py so the two agree
-BIAS = 1.5        # mm, smallest average offset worth detecting
-EQ_MARGIN = 2.0   # mm, how close counts as equivalent
+# thresholds, one copy in src/stats.py so every script agrees
+BIAS = BIAS_MM            # mm, smallest average offset worth detecting
+EQ_MARGIN = EQ_MARGIN_MM  # mm, how close counts as equivalent
 
 # the two study targets. f3 is the dlpfc proxy from herwig 2003, sma is the midline
 # point in front of cz used by the mantovani 2010 protocol
@@ -98,59 +105,9 @@ def tolerance_region(samples, truth):
     }
 
 
-def subject_test(values, mu0=BIAS, alpha=0.05):
-    """One sample t test of subject level means against mu0. n is SUBJECTS.
-
-    do not run this on monte carlo draws. the standard error is s/sqrt(n) and n
-    there is the number of times you chose to run the loop, so the p value is
-    something you set rather than something you measure. simulate ten times longer
-    and p drops by orders of magnitude without a single new head being measured.
-    the simulation is there to estimate the spread, sigma. the spread then feeds
-    the sample size formula, and the t test runs once, on real subjects.
-
-    mu0 is whatever null the question needs. for a signed difference between two
-    localization methods that is 0. for a displacement magnitude, which cannot be
-    negative, testing against 0 is meaningless, so use the bias threshold instead.
-    """
-
-    v = np.asarray(values, dtype=float)
-    n = len(v)
-    if n < 2:
-        raise ValueError(f"need at least 2 subjects for a t test, got {n}")
-
-    df = n - 1
-    mean = float(v.mean())
-    se = float(v.std(ddof=1)) / np.sqrt(n)   # ddof=1, the sample sd, not the population one
-
-    t = (mean - mu0) / se
-    p = 2.0 * float(stats.t.sf(abs(t), df))
-    half = float(stats.t.ppf(1.0 - alpha / 2.0, df)) * se
-
-    return {
-        "n": n, "df": df, "mean": mean, "se": se, "t": float(t), "p": p,
-        "ci": (mean - half, mean + half),
-    }
-
-
-def subject_tost(values, margin=EQ_MARGIN, alpha=0.05):
-    """Two one sided tests. Rejecting BOTH is what buys you 'equivalent'.
-
-    a plain t test that fails to reject says nothing, absence of evidence. tost
-    turns the question round, the null is that the difference is at least as big
-    as the margin, and rejecting that is a positive claim of equivalence.
-    """
-
-    v = np.asarray(values, dtype=float)
-    n = len(v)
-    df = n - 1
-    mean = float(v.mean())
-    se = float(v.std(ddof=1)) / np.sqrt(n)
-
-    p_lower = float(stats.t.sf((mean + margin) / se, df))   # H0: mean <= -margin
-    p_upper = float(stats.t.cdf((mean - margin) / se, df))  # H0: mean >= +margin
-    worst = max(p_lower, p_upper)
-
-    return {"p_lower": p_lower, "p_upper": p_upper, "p": worst, "equivalent": worst < alpha}
+# subject_test and subject_tost used to live here. they moved to src/stats.py so the
+# viewer export can run the same test on the stand in subjects, the docstrings there
+# say why the test runs on subjects and never on draws
 
 
 def n_from_formula(sigma, effect, z_alpha=1.96, z_beta=0.84):
@@ -303,7 +260,7 @@ def main():
     print(f"  {'capError':>9s} {'spread':>7s} {'n normal':>9s} {'power':>7s}"
           f" {'n with t':>9s} {'power':>7s}")
     for cap in (sigma, 1.0, 2.0, 2.5):
-        spread = np.sqrt(cap**2 + 0.75**2)   # navError = 0.75, as in the script
+        spread = np.sqrt(cap**2 + NAV_TRE_MM**2)   # navError, as in sample_size.py
         n_z = n_from_formula(spread, BIAS)
         n_t = n_from_t(spread, BIAS)
         print(f"  {cap:9.2f} {spread:7.2f} {n_z:9d} {power_by_simulation(spread, BIAS, n_z, rng):7.3f}"
@@ -316,7 +273,7 @@ def main():
     # --- the subject level test, on stand in subject means so the wiring is visible -----
     print()
     print("subject level test, stand in numbers until there are real subjects")
-    per_subject_sd = float(np.sqrt(sigma**2 + 0.75**2))
+    per_subject_sd = float(np.sqrt(sigma**2 + NAV_TRE_MM**2))
     subj = rng.normal(1.30, per_subject_sd, size=24)  # 24 subjects, one mean miss each
     tt = subject_test(subj, mu0=BIAS)
     print(f"  n = {tt['n']} subjects, mean miss {tt['mean']:.2f} mm, 95% CI"
@@ -324,8 +281,8 @@ def main():
     print(f"  t = {tt['t']:.2f} on {tt['df']} df, p = {tt['p']:.3f}"
           f"   (null: the mean miss equals the {BIAS} mm we care about)")
     eq = subject_tost(subj, margin=EQ_MARGIN)
-    print(f"  TOST against +/- {EQ_MARGIN} mm: p = {eq['p']:.4f},"
-          f" equivalent = {eq['equivalent']}")
+    print(f"  TOST against +/- {EQ_MARGIN} mm: p = {eq['p']:.4f}, 90% CI"
+          f" [{eq['ci90'][0]:.2f}, {eq['ci90'][1]:.2f}] mm, equivalent = {eq['equivalent']}")
     print("  (TOST is the one that can make a positive claim. a plain t test that")
     print("   fails to reject only means you did not look hard enough)")
 
