@@ -1,4 +1,7 @@
-# scalp surface from the t1, outer shell only
+# scalp surface from the t1, outer shell only.
+# there was a brain_surface here too, an eroded blob standing in for the cortex.
+# it was never accurate enough to read anything off, so it is gone. the real
+# cortex comes from the simnibs head model on the aim 2 side, see efield/
 import numpy as np
 import pyvista as pv
 from scipy import ndimage, sparse
@@ -103,44 +106,6 @@ def flatten_cut(surf, wipe, affine, reach_vox=3, n_iter=150):
     out = surf.copy()
     out.points = pts.astype(np.float32)
     return out
-
-
-def brain_surface(volume, affine, erode_mm=12, smooth_sigma=1.5, smooth_iters=40, mask=None):
-    """Rough intracranial surface, the head mask eroded in by a skull thickness.
-
-    Crude stand in for the cortex, no gyri, just a smooth blob to sit inside the
-    scalp. real cortex comes from simnibs/freesurfer later. the head mask comes
-    out solid, so there is nothing left to fill before eroding
-    """
-
-    head_mask = classify_head_voxels(volume, affine) if mask is None else mask
-
-    # pull in erode_mm to clear scalp and skull. binary_erosion counts voxels, not
-    # mm, so on a 1 x 1 x 1.2 mm scan it would eat 12 mm two ways and 14.4 the third.
-    # the distance transform knows the real spacing, so the shell comes off evenly
-    vox = voxel_sizes(affine)
-    inner = ndimage.distance_transform_edt(head_mask, sampling=vox) > erode_mm
-
-    # erosion can leave little islands, keep the biggest lump
-    labeled, num = ndimage.label(inner)
-    if num > 1:
-        sizes = ndimage.sum(inner, labeled, range(1, num + 1))
-        inner = labeled == (1 + int(np.argmax(sizes)))
-
-    field = ndimage.gaussian_filter(inner.astype(np.float32), sigma=smooth_sigma / vox)
-    grid = pv.ImageData(dimensions=field.shape, spacing=(1, 1, 1), origin=(0, 0, 0))
-    grid.point_data["brain"] = field.flatten(order="F")
-
-    surf = grid.contour([0.5], scalars="brain")
-    surf.points = voxel_to_ras(surf.points, affine)
-    surf = surf.connectivity("largest")
-    surf = surf.extract_surface(algorithm="dataset_surface").clean()
-
-    if smooth_iters:
-        surf = surf.smooth_taubin(n_iter=smooth_iters, pass_band=0.05)
-
-    surf = surf.flip_faces()
-    return surf
 
 
 def check_outward(surf):

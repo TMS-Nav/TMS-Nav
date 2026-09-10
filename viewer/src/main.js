@@ -1,15 +1,14 @@
-// tms-nav viewer. loads the scalp and a rough brain, drops the 5 stimulation
-// targets and the eeg landmarks on the head, plus one demo coil on the side. all
-// in RAS mm with z up. same vanilla three.js setup as fmriviz
+// tms-nav viewer. loads the scalp, drops the 5 stimulation targets and the eeg
+// landmarks on the head, plus one demo coil on the side. all in RAS mm with z up.
+// same vanilla three.js setup as fmriviz
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { PLYLoader } from "three/examples/jsm/loaders/PLYLoader.js";
 import { CSS2DRenderer, CSS2DObject } from "three/examples/jsm/renderers/CSS2DRenderer.js";
 
-import { DATASETS } from "./datasetRegistry.js";
+import { DATASETS, GROUP } from "./datasetRegistry.js";
 
 const SCALP_COLOR = 0xcccccc;
-const BRAIN_COLOR = 0xd6a0a0;
 const COIL_COLOR = 0x1f77b4;
 const TARGET_COLOR = 0x111111;
 
@@ -48,20 +47,17 @@ scene.add(fillLight);
 
 // each layer is its own group so the toggles just flip .visible
 const scalpGroup = new THREE.Group();
-const brainGroup = new THREE.Group();
 const coilGroup = new THREE.Group();
 const targetGroup = new THREE.Group();
 const landmarkGroup = new THREE.Group();
 const mcGroup = new THREE.Group();
-scene.add(scalpGroup, brainGroup, coilGroup, targetGroup, landmarkGroup, mcGroup);
+scene.add(scalpGroup, coilGroup, targetGroup, landmarkGroup, mcGroup);
 
-// which layers are on. the brain is off by default because it sits inside the
-// scalp, everything else shows. choices survive a reload via localStorage, and on
-// start the same state is pushed onto both the checkbox and the layer, so the two
-// cannot drift apart the way they did when the browser restored the boxes alone
+// which layers are on. choices survive a reload via localStorage, and on start the
+// same state is pushed onto both the checkbox and the layer, so the two cannot
+// drift apart the way they did when the browser restored the boxes alone
 const LAYER_DEFAULTS = {
   "toggle-scalp": true,
-  "toggle-brain": false,
   "toggle-coil": true,
   "toggle-targets": true,
   "toggle-landmarks": true,
@@ -69,7 +65,6 @@ const LAYER_DEFAULTS = {
   "mc-samples": true,
   "mc-mean": true,
   "mc-ellipsoid": true,
-  "mc-dist": true,
 };
 const LAYER_STORAGE_KEY = "tms-nav-layers";
 
@@ -91,14 +86,49 @@ function saveLayerState(state) {
 }
 
 const layerState = loadLayerState();
-brainGroup.visible = layerState["toggle-brain"];
 mcGroup.visible = layerState["toggle-mc"];
 
-// distance histograms. the monte carlo payload of the loaded subject, and which of
-// its two distances is on show
+// which target rows and which cross subject rows are open. sets, not booleans, so
+// several can be open at once, and they are remembered the same way the layers are
+const OPEN_STORAGE_KEY = "tms-nav-open";
+let openSites = new Set();
+let openGroup = new Set();
+try {
+  const saved = JSON.parse(localStorage.getItem(OPEN_STORAGE_KEY) || "{}");
+  openSites = new Set(saved.sites || []);
+  openGroup = new Set(saved.group || []);
+} catch {
+  // storage blocked, everything just starts closed
+}
+
+function saveOpenState() {
+  try {
+    localStorage.setItem(
+      OPEN_STORAGE_KEY,
+      JSON.stringify({ sites: [...openSites], group: [...openGroup] })
+    );
+  } catch {
+    // same, the session still works, it just forgets
+  }
+}
+
+// the subject on screen, shown in the metrics column head
+let currentSubject = "";
+
+// aim 1 metrics panel. the monte carlo payload of the loaded subject, and which of
+// its four metrics is on show. two distances in mm, two angles in degrees
 let distData = null;
 let distMetric = "miss";
 const DIST_BINS = 30;
+
+// json key, stats key, unit and tick spacing per metric. the rug of on screen draws
+// only exists for the two distances, the angles have no dots to point at
+const METRICS = {
+  miss: { key: "miss_mm", stats: "miss_stats", unit: "mm", tick: 1, rug: true },
+  pair: { key: "pair_mm", stats: "pair_stats", unit: "mm", tick: 1, rug: true },
+  tilt: { key: "tilt_deg", stats: "tilt_stats", unit: "deg", tick: 2, rug: false },
+  orient: { key: "orient_deg", stats: "orient_stats", unit: "deg", tick: 2, rug: false },
+};
 
 let scalpMaterial = null; // held onto for the opacity slider
 const targetMeshes = []; // held onto for the variability slider
@@ -157,17 +187,16 @@ async function loadDataset(key) {
 
   const token = ++loadToken;
 
-  const [scalpGeo, brainGeo, coilGeo] = await Promise.all([
+  const [scalpGeo, coilGeo] = await Promise.all([
     loadPLY(ds.scalpURL.href),
-    loadPLY(ds.brainURL.href),
     loadPLY(ds.coilURL.href),
   ]);
   if (token !== loadToken) return; // a newer switch already won
 
   clearScene();
 
+  currentSubject = ds.label || key;
   addScalp(scalpGeo);
-  addBrain(brainGeo);
   addCoil(coilGeo);
   addTargets(ds.markers.targets);
   addLandmarks(ds.markers.landmarks, ds.markers.targets);
@@ -181,7 +210,7 @@ async function loadDataset(key) {
 // tear down the previous subject. the groups themselves stay so the layer toggles
 // keep working, only their contents go
 function clearScene() {
-  for (const g of [scalpGroup, brainGroup, coilGroup, targetGroup, landmarkGroup, mcGroup]) {
+  for (const g of [scalpGroup, coilGroup, targetGroup, landmarkGroup, mcGroup]) {
     for (const child of [...g.children]) {
       // css2d labels hang off the marker meshes, their dom nodes have to be pulled
       // out by hand or they pile up on every switch
@@ -246,18 +275,6 @@ function addScalp(geo) {
     side: THREE.DoubleSide,
   });
   scalpGroup.add(new THREE.Mesh(geo, scalpMaterial));
-}
-
-function addBrain(geo) {
-  const mat = new THREE.MeshStandardMaterial({
-    color: BRAIN_COLOR,
-    transparent: true,
-    opacity: 0.6,
-    roughness: 0.7,
-    metalness: 0.0,
-    side: THREE.DoubleSide,
-  });
-  brainGroup.add(new THREE.Mesh(geo, mat));
 }
 
 function addCoil(geo) {
@@ -325,6 +342,8 @@ function addMonteCarlo(mc) {
       `landmark ${n.landmark_tangent} / ${n.landmark_normal} mm`,
       `mark ${n.mark_tangent} / ${n.mark_normal} mm`,
       `tape ${n.tape} mm`,
+      `coil handle yaw ${n.coil_yaw} deg`,
+      `navigation TRE ${mc.nav_tre_mm} mm, fixed`,
     ].join("\n");
   }
 
@@ -405,25 +424,71 @@ function addMonteCarlo(mc) {
   renderDistances();
 }
 
-// ---- distance histograms -----------------------------------------------------------
-// one small histogram per target, all on the same axis so the sites compare. every
-// draw of the simulation goes in the bars. the draws currently on screen are the
-// ticks along the bottom, so resample visibly redraws a sample from the population
+// ---- aim 1 metrics -----------------------------------------------------------------
+// the panel is a table first and charts second. every target always shows the two
+// numbers that matter for the metric on show, mean and p95, for the head currently
+// loaded. clicking a target opens the detail underneath it: the histogram of all
+// 1200 draws and the bland altman agreement rows. the cross subject summary is its
+// own section at the bottom and starts closed, because it is about every head at
+// once and not about the one on screen
 function renderDistances() {
   const host = document.getElementById("dist-charts");
   if (!host) return;
   host.innerHTML = "";
   if (!distData) return;
 
-  const key = distMetric === "miss" ? "miss_mm" : "pair_mm";
-  const statsKey = distMetric === "miss" ? "miss_stats" : "pair_stats";
+  const m = METRICS[distMetric];
 
-  // shared axis, rounded up to the next half millimetre
-  const xmax = Math.ceil(Math.max(...distData.sites.map((s) => s[statsKey].max_mm)) * 2) / 2 || 1;
+  // shared axis, rounded up to the next tick, so the sites compare
+  const xmax =
+    Math.ceil(Math.max(...distData.sites.map((s) => s[m.stats].max)) / m.tick) * m.tick || m.tick;
 
-  distData.sites.forEach((site, i) => {
-    host.appendChild(distanceChart(site, key, statsKey, xmax, shownDistances(i)));
+  for (const [i, site] of distData.sites.entries()) {
+    host.appendChild(siteRow(site, i, m, xmax));
+  }
+
+  // the unit belongs in the column head, not on every row
+  const label = document.getElementById("subject-label");
+  if (label) label.textContent = `${currentSubject} (${m.unit})`;
+
+  renderGroup();
+}
+
+// one target: a clickable summary line, and the detail it opens
+function siteRow(site, i, m, xmax) {
+  const st = site[m.stats];
+  const open = openSites.has(site.label);
+
+  const wrap = document.createElement("div");
+  wrap.className = "site" + (open ? " open" : "");
+
+  const head = document.createElement("button");
+  head.type = "button";
+  head.className = "site-head";
+  head.setAttribute("aria-expanded", open ? "true" : "false");
+  head.innerHTML =
+    `<span class="c-name">` +
+    `<span class="chev"></span>` +
+    `<span class="swatch" style="background:${site.color}"></span>` +
+    `${site.label}</span>` +
+    `<span class="c-num">${st.mean.toFixed(2)}</span>` +
+    `<span class="c-num">${st.p95.toFixed(2)}</span>`;
+  head.addEventListener("click", () => {
+    if (openSites.has(site.label)) openSites.delete(site.label);
+    else openSites.add(site.label);
+    saveOpenState();
+    renderDistances();
   });
+  wrap.appendChild(head);
+
+  if (open) {
+    const body = document.createElement("div");
+    body.className = "site-body";
+    body.appendChild(histogramChart(site, m, xmax, m.rug ? shownDistances(i) : []));
+    body.appendChild(agreementBlock(site));
+    wrap.appendChild(body);
+  }
+  return wrap;
 }
 
 // distances for the draws on screen, from the same offsets the dots are drawn with
@@ -443,55 +508,42 @@ function shownDistances(i) {
   return out;
 }
 
-function distanceChart(site, key, statsKey, xmax, shown) {
+const svgNS = "http://www.w3.org/2000/svg";
+function svgEl(tag, attrs, parent) {
+  const n = document.createElementNS(svgNS, tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (parent) parent.appendChild(n);
+  return n;
+}
+
+function histogramChart(site, m, xmax, shown) {
   const W = 300;
-  const H = 88;
+  const H = 76;
   const left = 4;
   const right = 6;
   const top = 4;
-  const bottom = 18;
+  const bottom = 16;
   const plotW = W - left - right;
   const plotH = H - top - bottom;
 
-  const values = site[key];
-  const st = site[statsKey];
+  const values = site[m.key];
   const counts = new Array(DIST_BINS).fill(0);
   for (const v of values) {
     const b = Math.min(DIST_BINS - 1, Math.floor((v / xmax) * DIST_BINS));
     counts[b] += 1;
   }
   const peak = Math.max(...counts, 1);
-  const x = (mm) => left + (mm / xmax) * plotW;
+  const st = site[m.stats];
+  const x = (v) => left + (v / xmax) * plotW;
 
-  const svgNS = "http://www.w3.org/2000/svg";
-  const el = (tag, attrs, parent) => {
-    const n = document.createElementNS(svgNS, tag);
-    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
-    if (parent) parent.appendChild(n);
-    return n;
-  };
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, width: W, height: H, class: "dist-svg" });
 
-  const wrap = document.createElement("div");
-  wrap.className = "dist-site";
-
-  // header, text in text colour, identity from the swatch beside it
-  const head = document.createElement("div");
-  head.className = "dist-label";
-  head.innerHTML =
-    `<span class="swatch" style="background:${site.color}"></span>` +
-    `<b>${site.label}</b>` +
-    (site.optional ? `<span class="muted">(optional)</span>` : "") +
-    `<span class="stats">mean ${st.mean_mm.toFixed(1)} &middot; p95 ${st.p95_mm.toFixed(1)} mm</span>`;
-  wrap.appendChild(head);
-
-  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, width: W, height: H, class: "dist-svg" });
-
-  // baseline and a recessive tick every millimetre
-  el("line", { x1: left, x2: W - right, y1: top + plotH, y2: top + plotH, class: "axis" }, svg);
-  for (let mm = 0; mm <= xmax; mm += 1) {
-    el("line", { x1: x(mm), x2: x(mm), y1: top + plotH, y2: top + plotH + 3, class: "axis" }, svg);
-    const t = el("text", { x: x(mm), y: H - 3, class: "tick", "text-anchor": "middle" }, svg);
-    t.textContent = `${mm}`;
+  // baseline and a recessive tick at every step
+  svgEl("line", { x1: left, x2: W - right, y1: top + plotH, y2: top + plotH, class: "axis" }, svg);
+  for (let v = 0; v <= xmax; v += m.tick) {
+    svgEl("line", { x1: x(v), x2: x(v), y1: top + plotH, y2: top + plotH + 3, class: "axis" }, svg);
+    const t = svgEl("text", { x: x(v), y: H - 3, class: "tick", "text-anchor": "middle" }, svg);
+    t.textContent = `${v}`;
   }
 
   // bars, 2px of surface between neighbours, flat at the baseline
@@ -499,7 +551,7 @@ function distanceChart(site, key, statsKey, xmax, shown) {
   counts.forEach((c, b) => {
     if (!c) return;
     const h = (c / peak) * plotH;
-    const bar = el("rect", {
+    const bar = svgEl("rect", {
       x: left + b * slot + 1,
       y: top + plotH - h,
       width: Math.max(slot - 2, 1),
@@ -509,21 +561,117 @@ function distanceChart(site, key, statsKey, xmax, shown) {
     }, svg);
     const lo = ((b * xmax) / DIST_BINS).toFixed(2);
     const hi = (((b + 1) * xmax) / DIST_BINS).toFixed(2);
-    const title = el("title", {}, bar);
-    title.textContent = `${lo} to ${hi} mm: ${c} of ${values.length} draws (${((100 * c) / values.length).toFixed(1)}%)`;
+    const title = svgEl("title", {}, bar);
+    title.textContent = `${lo} to ${hi} ${m.unit}: ${c} of ${values.length} draws (${((100 * c) / values.length).toFixed(1)}%)`;
   });
 
   // the draws on screen, as a rug
   for (const d of shown) {
-    el("line", { x1: x(d), x2: x(d), y1: top + plotH - 9, y2: top + plotH, class: "rug" }, svg);
+    svgEl("line", { x1: x(d), x2: x(d), y1: top + plotH - 9, y2: top + plotH, class: "rug" }, svg);
   }
 
-  // mean and 95th percentile
-  el("line", { x1: x(st.mean_mm), x2: x(st.mean_mm), y1: top, y2: top + plotH, class: "stat" }, svg);
-  el("line", { x1: x(st.p95_mm), x2: x(st.p95_mm), y1: top, y2: top + plotH, class: "stat dotted" }, svg);
+  // mean solid, 95th percentile dotted
+  svgEl("line", { x1: x(st.mean), x2: x(st.mean), y1: top, y2: top + plotH, class: "stat" }, svg);
+  svgEl("line", { x1: x(st.p95), x2: x(st.p95), y1: top, y2: top + plotH, class: "stat dotted" }, svg);
 
-  wrap.appendChild(svg);
-  return wrap;
+  const box = document.createElement("div");
+  box.appendChild(svg);
+  const cap = document.createElement("div");
+  cap.className = "cap";
+  cap.textContent = `${values.length} draws, solid mean, dotted p95`;
+  box.appendChild(cap);
+  return box;
+}
+
+// bland altman per direction. bias is where the middle of the cloud sits, the limits
+// hold 95% of single placements. a tolerance statement about one cap, not a
+// confidence statement about the mean, which is the thing a patient experiences
+const BA_ROWS = [
+  ["along_1", "along scalp 1"],
+  ["along_2", "along scalp 2"],
+  ["normal", "in / out"],
+];
+
+function agreementBlock(site) {
+  const ba = site.bland_altman;
+  const el = document.createElement("table");
+  el.className = "agree";
+  const fmt = (v) => (v >= 0 ? "+" : "") + v.toFixed(2);
+  let html = `<tr><th>agreement, mm</th><th>bias</th><th>95% limits</th></tr>`;
+  for (const [key, label] of BA_ROWS) {
+    const r = ba[key];
+    if (!r) continue;
+    html += `<tr><td>${label}</td><td>${fmt(r.bias)}</td><td>${fmt(r.loa_lo)} to ${fmt(r.loa_hi)}</td></tr>`;
+  }
+  el.innerHTML = html;
+  return el;
+}
+
+// the cross subject section. one line per target: the mean over subjects and whether
+// tost clears the margin. the per subject numbers sit behind the same line, so the
+// section stays a summary until you ask it for the detail
+function renderGroup() {
+  const host = document.getElementById("group");
+  const title = document.getElementById("group-title");
+  if (!host) return;
+  host.innerHTML = "";
+  if (!GROUP) return;
+
+  const which = distMetric === "tilt" || distMetric === "orient" ? "orient" : "miss";
+  const unit = which === "miss" ? "mm" : "deg";
+  if (title) title.textContent = `across subjects, n = ${GROUP.n_subjects}`;
+
+  for (const t of GROUP.targets) {
+    const test = t.tests[which];
+    if (!test || test.n < 2) continue;
+    const open = openGroup.has(t.label);
+
+    const wrap = document.createElement("div");
+    wrap.className = "site" + (open ? " open" : "");
+
+    const head = document.createElement("button");
+    head.type = "button";
+    head.className = "site-head";
+    head.setAttribute("aria-expanded", open ? "true" : "false");
+    head.innerHTML =
+      `<span class="c-name">` +
+      `<span class="chev"></span>` +
+      `<span class="swatch" style="background:${t.color}"></span>` +
+      `${t.label}</span>` +
+      `<span class="c-num">${test.mean.toFixed(2)} ${unit}</span>` +
+      `<span class="pill ${test.equivalent ? "ok" : "no"}">${test.equivalent ? "equivalent" : "not shown"}</span>`;
+    head.addEventListener("click", () => {
+      if (openGroup.has(t.label)) openGroup.delete(t.label);
+      else openGroup.add(t.label);
+      saveOpenState();
+      renderGroup();
+    });
+    wrap.appendChild(head);
+
+    if (open) {
+      const body = document.createElement("div");
+      body.className = "site-body";
+      const cells = t.rows.map((r) => `<span>${r.subject} ${r[which].toFixed(2)}</span>`).join("");
+      body.innerHTML =
+        `<div class="cells">${cells}</div>` +
+        `<div class="verdict ${test.equivalent ? "ok" : "no"}">` +
+        `95% CI ${test.ci95[0].toFixed(2)} to ${test.ci95[1].toFixed(2)} ${unit}` +
+        `<br>TOST &plusmn;${test.margin}: 90% CI ${test.ci90[0].toFixed(2)} to ${test.ci90[1].toFixed(2)}, p ${test.p_tost.toFixed(3)}` +
+        (test.t_mu0 == null
+          ? ""
+          : `<br>t vs ${test.t_mu0} ${unit}: t ${test.t.toFixed(2)}, p ${test.p.toFixed(3)}`) +
+        `</div>`;
+      wrap.appendChild(body);
+    }
+    host.appendChild(wrap);
+  }
+
+  if (GROUP.stand_in) {
+    const note = document.createElement("div");
+    note.className = "cap";
+    note.textContent = "stand in scans, all one nominal head model. wiring, not a result.";
+    host.appendChild(note);
+  }
 }
 
 function setDistMetric(metric) {
@@ -721,7 +869,6 @@ function bindUI() {
   const toggle = (id, group) => remember(id, (on) => (group.visible = on));
 
   toggle("toggle-scalp", scalpGroup);
-  toggle("toggle-brain", brainGroup);
   toggle("toggle-coil", coilGroup);
   toggle("toggle-targets", targetGroup);
   toggle("toggle-landmarks", landmarkGroup);
@@ -765,11 +912,21 @@ function bindUI() {
     remember(id, (on) => setMcPart(part, on));
   }
 
-  // the histogram panel, and which distance it shows
-  const dist = document.getElementById("dist");
-  remember("mc-dist", (on) => dist.classList.toggle("hidden", !on));
+  // which metric the panel shows
   for (const b of document.querySelectorAll("#dist .seg button")) {
     b.addEventListener("click", () => setDistMetric(b.dataset.metric));
+  }
+
+  // the two disclosure headers, the simulation settings and the cross subject block
+  for (const [headId, bodyId] of [["mc-note-head", "mc-note"], ["group-head", "group"]]) {
+    const head = document.getElementById(headId);
+    const body = document.getElementById(bodyId);
+    if (!head || !body) continue;
+    head.addEventListener("click", () => {
+      const open = head.getAttribute("aria-expanded") === "true";
+      head.setAttribute("aria-expanded", open ? "false" : "true");
+      body.hidden = open;
+    });
   }
 
   // zoom bar. the slider drives the camera, and orbit control scrolling drives the

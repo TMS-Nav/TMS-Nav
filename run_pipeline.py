@@ -11,7 +11,7 @@ import pyvista as pv
 from src.coil_model import place_coil
 from src.export_mc import export_monte_carlo
 from src.export_web import export_web, write_registry
-from src.head_surface import brain_surface, scalp_surface
+from src.head_surface import scalp_surface
 from src.scene import Scene
 from src.skull_boundary import head_mask, load_mri_volume
 from src.stats import render_distance_hist
@@ -56,7 +56,6 @@ def build_scene(mri_path):
 
     # sigma 2 keeps the scalp smooth for the figure
     scalp = scalp_surface(volume, affine, smooth_sigma=2.0, mask=mask, wipe=info.wipe)
-    brain = brain_surface(volume, affine, mask=mask)
     targets = standard_targets(scalp)
     landmarks = standard_landmarks(scalp)
     coil = place_coil(scalp, COIL_AIM, gap=GAP_MM)
@@ -66,7 +65,6 @@ def build_scene(mri_path):
         scalp=scalp,
         targets=targets,
         coil=coil,
-        brain=brain,
         landmarks=landmarks,
         qc=info.as_dict(),
     )
@@ -99,7 +97,6 @@ def main():
             print(f"DEFACED       {qc['cut_area_cm2']:.0f} cm2 of head surface is the"
                   f" wipe, the face is not in this file and cannot be rebuilt")
         print(f"scalp verts   {scalp.n_points}")
-        print(f"brain verts   {scene.brain.n_points}")
         print(f"scalp span mm {np.round(hi - lo, 1)}")
         for t in scene.targets:
             print(f"target {t.label:4s} RAS {np.round(t.contact, 1)}")

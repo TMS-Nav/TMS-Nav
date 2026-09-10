@@ -17,8 +17,6 @@ def export_web(scene, out_dir):
     # all meshes already in RAS mm
     scene.scalp.save(str(out_dir / "scalp.ply"))
     scene.coil.save(str(out_dir / "coil.ply"))
-    if scene.brain is not None:
-        scene.brain.save(str(out_dir / "brain.ply"))
 
     payload = {
         "subject": scene.name,
@@ -95,7 +93,6 @@ def write_registry(data_dir, registry_path):
             f'  {json.dumps(name)}: {{\n'
             f'    label: {json.dumps(label)},\n'
             f'    scalpURL: new URL("./data/{name}/scalp.ply", import.meta.url),\n'
-            f'    brainURL: new URL("./data/{name}/brain.ply", import.meta.url),\n'
             f'    coilURL: new URL("./data/{name}/coil.ply", import.meta.url),\n'
             f'    markers: {var}_MARKERS,\n'
             f'    monteCarlo: {var}_MC,\n'

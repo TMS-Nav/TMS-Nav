@@ -10,7 +10,7 @@
     <canvas id="c"></canvas>
 
     <div id="ui">
-      <h1>TMS-Nav</h1>
+      <h1>TMS Navigation</h1>
       <div class="subject">
         <label for="subject-select">subject</label>
         <select id="subject-select"></select>
@@ -19,7 +19,6 @@
       <fieldset>
         <legend>layers</legend>
         <label><input type="checkbox" id="toggle-scalp" autocomplete="off" checked /> scalp</label>
-        <label><input type="checkbox" id="toggle-brain" autocomplete="off" /> brain</label>
         <label><input type="checkbox" id="toggle-coil" autocomplete="off" checked /> coil</label>
         <label><input type="checkbox" id="toggle-targets" autocomplete="off" checked /> targets</label>
         <label><input type="checkbox" id="toggle-landmarks" autocomplete="off" checked /> landmarks</label>
@@ -45,12 +44,14 @@
         <label><input type="checkbox" id="mc-samples" autocomplete="off" checked /> samples</label>
         <label><input type="checkbox" id="mc-mean" autocomplete="off" checked /> mean</label>
         <label><input type="checkbox" id="mc-ellipsoid" autocomplete="off" checked /> 95% ellipsoid</label>
-        <label><input type="checkbox" id="mc-dist" autocomplete="off" checked /> distance histograms</label>
         <div class="row">
           <button id="mc-resample" type="button" title="draw a fresh random set">resample</button>
           <span class="hint" id="mc-draw"></span>
         </div>
-        <div class="hint" id="mc-note">...</div>
+        <button class="disclose" id="mc-note-head" type="button" aria-expanded="false">
+          <span class="chev"></span>settings
+        </button>
+        <div class="hint" id="mc-note" hidden></div>
       </fieldset>
 
       <div class="key">
@@ -66,14 +67,26 @@
 
     <div id="dist">
       <div class="dist-head">
-        <h2>placement error</h2>
+        <h2>Aim 1 Metrics</h2>
         <div class="seg">
-          <button type="button" data-metric="miss" class="on">to MRI target</button>
-          <button type="button" data-metric="pair">between placements</button>
+          <button type="button" data-metric="miss" class="on" title="distance from a placement to the MRI target">displacement</button>
+          <button type="button" data-metric="pair" title="distance between two placements of the same target">repeat</button>
+          <button type="button" data-metric="tilt" title="tilt of the coil face that follows from the mark being off">tilt</button>
+          <button type="button" data-metric="orient" title="total coil orientation difference, tilt plus handle yaw">orientation</button>
         </div>
       </div>
+
+      <div class="col-head">
+        <span id="subject-label">this head</span>
+        <span class="c-num">mean</span>
+        <span class="c-num">p95</span>
+      </div>
       <div id="dist-charts"></div>
-      <div class="hint">solid mean &middot; dotted p95 &middot; ticks are the draws shown</div>
+
+      <button class="disclose section" id="group-head" type="button" aria-expanded="false">
+        <span class="chev"></span><span id="group-title">across subjects</span>
+      </button>
+      <div id="group" hidden></div>
     </div>
 
     <div id="zoom">
