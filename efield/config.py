@@ -26,10 +26,12 @@ SIMNIBS_PYTHON = _env_path("TMSNAV_SIMNIBS_PYTHON", SIMNIBS_DIR / "bin" / "simni
 CHARM = _env_path("TMSNAV_CHARM", SIMNIBS_DIR / "bin" / "charm.cmd")
 
 # --- coil and stimulation -----------------------------------------------------
-# relative names resolve inside simnibs resources/coil_models. the magstim 70 mm
-# figure of eight is the study coil. the other two on this install are
-# Drakaki_BrainStim_2022/MagVenture_Cool-B65.ccd and .../MagVenture_C-B70.ccd
-COIL_FILE = os.environ.get("TMSNAV_COIL_FILE", os.path.join("legacy_and_other", "Magstim_70mm_Fig8.ccd"))
+# relative names resolve inside simnibs resources/coil_models. the study coil is
+# the magstim double 70 mm air film coil, which is this file. the older
+# legacy_and_other/Magstim_70mm_Fig8.ccd is a generic figure of eight, not the
+# measured D70, so it is not the one to use
+COIL_FILE = os.environ.get("TMSNAV_COIL_FILE",
+                           os.path.join("Drakaki_BrainStim_2022", "MagStim_D70.ccd"))
 # rate of change of coil current, A/s. 1e6 is 1 A/us, the simnibs default, and
 # the e field scales linearly with it so any intensity can be read off later
 DIDT = float(os.environ.get("TMSNAV_DIDT", 1e6))
@@ -60,6 +62,17 @@ M2M_ROOT = _env_path("TMSNAV_M2M_ROOT", ROOT / "saves" / "m2m")
 SIM_ROOT = _env_path("TMSNAV_SIM_ROOT", ROOT / "saves" / "efield")
 # brainsight session exports, <subject>_coil_pose_samples.txt
 BRAINSIGHT_ROOT = _env_path("TMSNAV_BRAINSIGHT_ROOT", ROOT / "saves" / "brainsight")
+
+# the r01's own fmri targets, one row per subject per site. see the template at
+# efield/fmri_targets_example.csv. this is the file that makes the e field
+# numbers mean "field delivered to the intended target" rather than "field
+# delivered under the coil", so without it run_efield falls back and says so
+FMRI_TARGETS = _env_path("TMSNAV_FMRI_TARGETS", ROOT / "saves" / "fmri_targets.csv")
+
+# an fmri target is already meant to be in cortex, so snapping it to the nearest
+# node of the central surface should barely move it. further than this and the
+# coordinate is probably in the wrong space, or deep, and wants checking
+ROI_SNAP_WARN_MM = float(os.environ.get("TMSNAV_ROI_SNAP_WARN_MM", 8.0))
 
 # finished example head models that ship with simnibs, used for dry runs until
 # the study scans have been through charm

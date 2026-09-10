@@ -34,7 +34,8 @@ from efield.headmodel import charm_command, find_m2m, format_command, run_charm
 from efield.job import Job, dryrun_path, results_path, runner_command
 from efield.metrics import format_site_stats, load_results, long_rows, site_stats, write_csv
 from efield.poses import CoilPose, displacement_mm, orientation_deg, tilt_deg
-from efield.roi import rois_for_poses
+from efield.config import FMRI_TARGETS
+from efield.roi import load_target_table, rois_for_subject
 from src.stats import rotation_about
 
 SAVE_DIR = Path("saves")
@@ -138,7 +139,7 @@ def build_poses(subject, m2m, brainsight_root):
 
 
 # --- one subject --------------------------------------------------------------------
-def process(subject, args, rows):
+def process(subject, args, rows, targets):
     print(f"\n=== {subject} ===")
     t1 = SAVE_DIR / f"{subject}.nii.gz"
 
@@ -162,12 +163,28 @@ def process(subject, args, rows):
     if not poses:
         print(f"  no poses: {source}")
         return
-    rois = rois_for_poses(poses)
+    # the roi goes at the r01's own fmri target when one has been supplied. that
+    # is the whole point, it makes the numbers "field delivered to the intended
+    # target" instead of "field delivered under the coil". a site with no target
+    # falls back to a guess under the coil and says so on every run
+    rois, guessed = rois_for_subject(subject, poses, table=targets)
+    for r in rois:
+        if not r.is_fallback:
+            where = "mni" if r.kind == "mni_sphere" else "subject"
+            coords = r.mni if r.kind == "mni_sphere" else r.centre
+            print(f"    roi {r.site:4s} at the fmri target, {where} "
+                  f"[{', '.join(f'{v:.1f}' for v in coords)}]")
+    if guessed:
+        print(f"    NO FMRI TARGET for {', '.join(guessed)}. those rois are a guess under")
+        print(f"    the coil, not the intended target. fill in {FMRI_TARGETS}")
 
     job = Job(subject=subject, m2m=str(m2m.path) if m2m else str(Path(args.m2m_root) / f"m2m_{subject}"),
               poses=poses, rois=rois, snap_to_skin=stand_in, poses_source=source)
     if stand_in:
         job.notes.append("poses are STAND INS built off a target plus a fixed nudge, not recorded coil poses")
+    if guessed:
+        job.notes.append(
+            "rois at " + ", ".join(guessed) + " are a guess under the coil, no fmri target supplied")
     job_path = job.write_json()
     print(job.summary())
     print(f"  wrote {job_path}")
@@ -214,6 +231,8 @@ def main(argv=None):
     ap.add_argument("--m2m-root", default=str(config.M2M_ROOT), help="where m2m_<subject> folders live")
     ap.add_argument("--m2m", default=None, help="one m2m folder to use for every subject, eg m2m_ernie")
     ap.add_argument("--brainsight-root", default=str(config.BRAINSIGHT_ROOT))
+    ap.add_argument("--fmri-targets", default=str(config.FMRI_TARGETS),
+                    help="csv of the r01 fmri targets, see efield/fmri_targets_example.csv")
     ap.add_argument("--dry-run", action="store_true", help="the default, accepted for clarity")
     ap.add_argument("--run", action="store_true", help="really run simnibs. hours per subject")
     ap.add_argument("--charm", action="store_true", help="really build missing head models with charm")
@@ -234,9 +253,16 @@ def main(argv=None):
     print(f"subjects         {', '.join(subjects)}")
     print(f"mode             {'RUN' if args.run else 'dry run'}{', CHARM' if args.charm else ''}")
 
+    # one read of the fmri target table for the whole run
+    targets = load_target_table(args.fmri_targets)
+    if targets:
+        print(f"fmri targets     {len(targets)} rows from {args.fmri_targets}")
+    else:
+        print(f"fmri targets     NONE at {args.fmri_targets}, rois fall back to a guess under the coil")
+
     rows = []
     for s in subjects:
-        process(s, args, rows)
+        process(s, args, rows, targets)
 
     print()
     if rows:

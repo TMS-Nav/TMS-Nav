@@ -20,7 +20,13 @@ from efield.headmodel import charm_command, find_m2m  # noqa: E402
 from efield.job import Job, runner_command  # noqa: E402
 from efield.metrics import dice, long_rows, paired_metrics  # noqa: E402
 from efield.poses import CoilPose, displacement_mm, is_rotation, orientation_deg, tilt_deg  # noqa: E402
-from efield.roi import RoiSpec, roi_under_pose, rois_for_poses  # noqa: E402
+from efield.roi import (  # noqa: E402
+    RoiSpec,
+    load_target_table,
+    roi_under_pose,
+    rois_for_poses,
+    rois_for_subject,
+)
 from efield.runner_simnibs import roi_metrics, snap_to_nodes, sphere_mask  # noqa: E402
 from src.stats import rotation_about  # noqa: E402
 from src.targets import Target  # noqa: E402
@@ -230,6 +236,83 @@ def test_runner_dry_run_on_ernie():
     assert not list(ERNIE.rglob("subject_overlays"))
 
 
+def test_fmri_target_table():
+    """The r01 target csv parses, and every bad row is caught."""
+
+    good = """subject,site,x,y,z,space,note
+# a comment, and a blank line follow
+
+S01,SMA,-4.2,-2.1,62.0,subject,left of midline
+S01,F4,38.5,34.0,32.4,mni,
+"""
+    with tempfile.TemporaryDirectory() as d:
+        f = Path(d) / "t.csv"
+        f.write_text(good, encoding="utf8")
+        table = load_target_table(f)
+        assert set(table) == {("S01", "SMA"), ("S01", "F4")}
+        assert table[("S01", "SMA")]["coords"] == [-4.2, -2.1, 62.0]
+        assert table[("S01", "SMA")]["space"] == "subject"
+        assert table[("S01", "F4")]["space"] == "mni"
+        assert table[("S01", "SMA")]["note"] == "left of midline"
+
+        # a missing file is normal until the targets are handed over
+        assert load_target_table(Path(d) / "nope.csv") == {}
+
+        bad = [
+            ("subject,site,x,y,z,space\nS01,SMA,1,2,3,scanner\n", "space"),
+            ("subject,site,x,y,z,space\nS01,NOSE,1,2,3,subject\n", "site"),
+            ("subject,site,x,y,z,space\nS01,SMA,1,2,three,subject\n", "numbers"),
+            ("subject,site,x,y,z,space\nS01,SMA,1,2,3,subject\nS01,SMA,4,5,6,subject\n", "twice"),
+            ("subject,site,x,y,z,space\nS01,SMA,1,,3,subject\n", "missing"),
+        ]
+        for text, why in bad:
+            f.write_text(text, encoding="utf8")
+            try:
+                load_target_table(f)
+            except ValueError:
+                continue
+            raise AssertionError(f"a row with a bad {why} was accepted")
+
+
+def test_roi_prefers_the_fmri_target():
+    """With a target the roi sits on it. Without one it falls back and says so."""
+
+    t = Target("R-DLPFC", "F4", "#ff7f0e", None,
+               np.array([40.0, 84.0, 66.0]), np.array([0.52, 0.53, 0.67]))
+    poses = [CoilPose.from_aim1_target(t, site="F4", method=m, rep=1) for m in ("MRI", "EEG")]
+
+    # supplied: the roi is the target itself, not anything derived from the coil
+    table = {("S01", "F4"): {"coords": [36.0, 35.0, 29.4], "space": "subject", "note": ""}}
+    rois, guessed = rois_for_subject("S01", poses, table=table)
+    assert guessed == [] and len(rois) == 1
+    roi = rois[0]
+    assert roi.kind == "fmri_target" and not roi.is_fallback
+    assert roi.centre == [36.0, 35.0, 29.4]
+    assert roi.reference_method == "fMRI"
+
+    # an mni target keeps its coordinate for the runner to map
+    table = {("S01", "F4"): {"coords": [38.0, 34.0, 32.0], "space": "mni", "note": ""}}
+    roi = rois_for_subject("S01", poses, table=table)[0][0]
+    assert roi.kind == "mni_sphere" and roi.mni == [38.0, 34.0, 32.0]
+
+    # nothing supplied: the fallback is used, is flagged, and is NOT the target
+    rois, guessed = rois_for_subject("S01", poses, table={})
+    assert guessed == ["F4"]
+    roi = rois[0]
+    assert roi.is_fallback and roi.kind == "sphere_under_coil"
+    assert "no fmri target" in roi.extra.get("fallback", "")
+    # it sits below the scalp contact, down the coil normal
+    assert roi.centre[2] < float(t.contact[2])
+
+    # a spec that claims a kind it has no coordinate for is refused
+    for kind, kw in (("fmri_target", {}), ("mni_sphere", {})):
+        try:
+            RoiSpec(kind=kind, site="F4", **kw)
+        except ValueError:
+            continue
+        raise AssertionError(f"{kind} with no coordinate was accepted")
+
+
 TESTS = [
     test_matsimnibs_round_trip,
     test_orientation_of_known_rotation,
@@ -237,6 +320,8 @@ TESTS = [
     test_brainsight_fixture_round_trip,
     test_job_json_round_trip,
     test_roi_seed_is_below_the_coil,
+    test_fmri_target_table,
+    test_roi_prefers_the_fmri_target,
     test_post_processing_on_fake_arrays,
     test_headmodel_finds_ernie,
     test_runner_dry_run_on_ernie,

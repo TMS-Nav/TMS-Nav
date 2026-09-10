@@ -63,9 +63,18 @@ git ignored because it derives from patient scans.
   `brainsight().read` applies. Exports must be in `NIfTI:Aligned` (or `NIfTI:Q:Aligned`
   from Brainsight 2.5.3 on). A `Brainsight` space export is LPS and is refused unless
   `allow_lps=True`.
-- The ROI is a 10 mm sphere on the GM central surface. Its seed is 20 mm down the MRI
-  guided coil normal; the runner snaps that to the nearest cortical node before drawing
-  the sphere. One ROI per site, shared by both methods.
+- **The ROI is the R01's own fMRI target.** Measuring under the coil only answers "how
+  much field landed under the coil", which is close to circular. Measuring at the
+  intended target answers what the study is asking. Targets are supplied in
+  `saves/fmri_targets.csv`, one row per subject per site, in subject mm or MNI mm (see
+  `efield/fmri_targets_example.csv`). MNI rows are mapped in by `mni2subject_coords`.
+  The ROI is a 10 mm sphere on the GM central surface around that point, snapped to the
+  nearest cortical node, and it is shared by both methods at a site.
+  A site with no supplied target falls back to a seed 20 mm down the MRI guided coil
+  normal. That fallback is flagged on every run, recorded in the job notes, and is a
+  stand in, not a result. The runner also warns when a target has to move more than
+  8 mm to reach the cortical surface, which usually means the coordinate is in the
+  wrong space.
 - `orientation_deg`, `tilt_deg`, `displacement_mm` reuse `src/stats.py`, so a coil
   orientation difference means the same thing in both aims.
 - Endpoints (`metrics.py`): percentage difference in area weighted mean |E| in the ROI is
@@ -79,9 +88,12 @@ git ignored because it derives from patient scans.
 2. Get real Brainsight session exports in NIfTI:Aligned space named per the protocol
    (`sub-<ID>_EEGCAP_<SITE>_POSE_REP<n>`, `sub-<ID>_MRI_<SITE>_POSE_REP<n>`). Until then the
    driver builds stand in poses off the Aim 1 targets plus a fixed nudge.
-3. Prespecify the equivalence margin on the primary endpoint (`metrics.PCT_MARGIN`,
-   placeholder 10 %) and the handle direction convention per site.
-4. `python run_efield.py --run` on a real head model, then `analysis/efield_stats.py` on
+3. Fill in `saves/fmri_targets.csv` with the R01 targets. Until it exists every ROI is
+   the fallback under the coil and the numbers do not mean what the proposal wants.
+4. Prespecify the equivalence margin on the primary endpoint (`metrics.PCT_MARGIN`,
+   placeholder 10 %), the absolute hotspot cut (`config.SUPRATHRESHOLD_ABS_VM`,
+   placeholder 50 V/m) and the handle direction convention per site.
+5. `python run_efield.py --run` on a real head model, then `analysis/efield_stats.py` on
    the resulting long table. Install `statsmodels` for the mixed model.
-5. `export_web.py` is a stub; the runner should dump the central surface to npz so the
+6. `export_web.py` is a stub; the runner should dump the central surface to npz so the
    viewer can paint |E| on the cortex without simnibs.

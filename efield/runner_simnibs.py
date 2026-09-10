@@ -35,6 +35,13 @@ except ImportError:            # project python, the pure functions below still 
 # space (wrong scan, lps instead of ras) rather than a badly placed coil
 MAX_SKIN_DISTANCE_MM = 30.0
 
+# an fmri target is meant to be in cortex already, so snapping it to the nearest
+# node of the central surface should barely move it. further than this and the
+# coordinate is probably in the wrong space. same default as efield/config.py,
+# repeated here because this file runs under the simnibs python and cannot
+# import the project package
+ROI_SNAP_WARN_MM = 8.0
+
 # node field names simnibs writes on the central surface overlay for field 'e'
 FIELD_MAGN = "E_magn"
 FIELD_NORMAL = "E_normal"
@@ -158,10 +165,13 @@ def realize_roi(roi, m2m):
     R = RegionOfInterest()
     R.load_surfaces("central", subpath=str(m2m))
     nodes = R.get_nodes()          # mask is all ones straight after loading
-    if roi["kind"] == "mni_sphere":
+    kind = roi.get("kind", "sphere_under_coil")
+    if kind == "mni_sphere":
         seed = np.asarray(simnibs.mni2subject_coords(roi["mni"], str(m2m)), dtype=float)
-    else:
+    elif kind in ("fmri_target", "sphere_under_coil"):
         seed = np.asarray(roi["centre"], dtype=float)
+    else:
+        raise ValueError(f"unknown roi kind {kind!r}")
     k = snap_to_nodes(nodes, seed)
     centre = nodes[k]
     # node_type must be said out loud. it defaults to "elm_center" even on a
@@ -174,8 +184,16 @@ def realize_roi(roi, m2m):
     mask = sphere_mask(nodes, centre, roi["radius_mm"])
     if mask.sum() != len(inside):
         print(f"    note: own sphere mask has {mask.sum()} nodes, simnibs's has {len(inside)}")
-    return {"centre_node": k, "centre": centre, "seed": seed, "snap_mm": float(np.linalg.norm(centre - seed)),
-            "mask": mask, "n_nodes": int(mask.sum()), "nodes": nodes}
+
+    # an fmri target is supposed to be in cortex already. if it lands far from any
+    # node of the central surface the coordinate is probably in the wrong space
+    snap = float(np.linalg.norm(centre - seed))
+    if kind in ("fmri_target", "mni_sphere") and snap > ROI_SNAP_WARN_MM:
+        print(f"    WARNING: {roi.get('name', kind)} moved {snap:.1f} mm to reach the cortical"
+              f" surface. check the coordinate is in the right space")
+
+    return {"centre_node": k, "centre": centre, "seed": seed, "snap_mm": snap,
+            "kind": kind, "mask": mask, "n_nodes": int(mask.sum()), "nodes": nodes}
 
 
 def build_session(job, coil_path):
