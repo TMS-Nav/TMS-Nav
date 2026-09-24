@@ -4,69 +4,92 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>TMS-Nav viewer</title>
+    <meta name="description" content="Where an EEG 10-20 cap puts a TMS coil compared with MRI guided neuronavigation, on six sample heads." />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='5' cy='8' r='3.5' fill='none' stroke='%231f77b4' stroke-width='1.6'/%3E%3Ccircle cx='11' cy='8' r='3.5' fill='none' stroke='%231f77b4' stroke-width='1.6'/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
-    <canvas id="c"></canvas>
-
-    <div id="ui">
-      <h1>TMS Navigation</h1>
-      <div class="subject">
-        <label for="subject-select">subject</label>
-        <select id="subject-select"></select>
-      </div>
-
-      <fieldset>
-        <legend>layers</legend>
-        <label><input type="checkbox" id="toggle-scalp" autocomplete="off" checked /> scalp</label>
-        <label><input type="checkbox" id="toggle-coil" autocomplete="off" checked /> coil</label>
-        <label><input type="checkbox" id="toggle-targets" autocomplete="off" checked /> targets</label>
-        <label><input type="checkbox" id="toggle-landmarks" autocomplete="off" checked /> landmarks</label>
-        <label><input type="checkbox" id="toggle-mc" autocomplete="off" checked /> monte carlo</label>
-      </fieldset>
-
-      <div class="row">
-        <label for="opacity">scalp opacity</label>
-        <input type="range" id="opacity" min="0" max="100" value="85" />
-      </div>
-
-      <div class="row">
-        <label for="variability">target variability <span id="variability-val">2.5 mm</span></label>
-        <input type="range" id="variability" min="1" max="10" step="0.5" value="2.5" />
-      </div>
-
-      <fieldset id="mc-panel">
-        <legend>monte carlo</legend>
-        <div class="row">
-          <label for="mc-scale">exaggerate <span id="mc-scale-val">x5</span></label>
-          <input type="range" id="mc-scale" min="1" max="10" step="1" value="5" />
+    <div id="app">
+      <aside id="ui" class="panel" aria-label="viewer controls">
+        <h1>TMS Navigation</h1>
+        <div class="subject">
+          <label for="subject-select">subject</label>
+          <select id="subject-select"></select>
         </div>
-        <label><input type="checkbox" id="mc-samples" autocomplete="off" checked /> samples</label>
-        <label><input type="checkbox" id="mc-mean" autocomplete="off" checked /> mean</label>
-        <label><input type="checkbox" id="mc-ellipsoid" autocomplete="off" checked /> 95% ellipsoid</label>
+
+        <fieldset>
+          <legend>layers</legend>
+          <label><input type="checkbox" id="toggle-scalp" autocomplete="off" checked /> scalp <span class="swatch sw-scalp" aria-hidden="true"></span></label>
+          <label><input type="checkbox" id="toggle-coil" autocomplete="off" checked /> coil <span class="swatch sw-coil" aria-hidden="true"></span></label>
+          <label><input type="checkbox" id="toggle-targets" autocomplete="off" checked /> targets <span class="swatch sw-target" aria-hidden="true"></span></label>
+          <label><input type="checkbox" id="toggle-landmarks" autocomplete="off" checked /> EEG landmarks <span class="swatch sw-landmark" aria-hidden="true"></span></label>
+          <label><input type="checkbox" id="toggle-mc" autocomplete="off" checked /> monte carlo <span class="swatch sw-mc" aria-hidden="true"><i></i><i></i><i></i></span></label>
+        </fieldset>
+
         <div class="row">
-          <button id="mc-resample" type="button" title="draw a fresh random set">resample</button>
-          <span class="hint" id="mc-draw"></span>
+          <label for="opacity">scalp opacity</label>
+          <input type="range" id="opacity" min="0" max="100" value="85" />
         </div>
-        <button class="disclose" id="mc-note-head" type="button" aria-expanded="false">
-          <span class="chev"></span>settings
+
+        <div class="row">
+          <label for="coil-opacity">coil opacity</label>
+          <input type="range" id="coil-opacity" min="0" max="100" value="35" />
+        </div>
+
+        <div class="row">
+          <label for="variability">target variability <span id="variability-val">2.5 mm</span></label>
+          <input type="range" id="variability" min="1" max="10" step="0.5" value="2.5" />
+        </div>
+
+        <fieldset id="mc-panel">
+          <legend>monte carlo</legend>
+          <div class="row">
+            <label for="mc-scale">exaggerate <span id="mc-scale-val">x5</span></label>
+            <input type="range" id="mc-scale" min="1" max="10" step="1" value="5" />
+          </div>
+          <label><input type="checkbox" id="mc-samples" autocomplete="off" checked /> samples</label>
+          <label><input type="checkbox" id="mc-mean" autocomplete="off" checked /> mean</label>
+          <label><input type="checkbox" id="mc-ellipsoid" autocomplete="off" checked /> 95% ellipsoid</label>
+          <div class="row">
+            <button id="mc-resample" type="button" title="draw a fresh random set">resample</button>
+            <span class="hint" id="mc-draw"></span>
+          </div>
+          <button class="disclose" id="mc-note-head" type="button" aria-expanded="false">
+            <span class="chev"></span>settings
+          </button>
+          <div class="hint" id="mc-note" hidden></div>
+        </fieldset>
+
+        <div class="hint">drag to rotate, scroll to zoom, click a marker</div>
+        <div class="credit">
+          Sample heads are the SimNIBS example data: ernie (T1, CC BY-NC 4.0) and the
+          group dataset (T2 to T6, ODC-PDDL, OpenfMRI ds000171).
+        </div>
+      </aside>
+
+      <main id="stage">
+        <canvas id="c"></canvas>
+
+        <button type="button" class="edge-tab edge-left" data-panel="ui" aria-controls="ui" aria-expanded="true" aria-label="Hide controls">
+          <span class="edge-chev" aria-hidden="true"></span>
         </button>
-        <div class="hint" id="mc-note" hidden></div>
-      </fieldset>
+        <button type="button" class="edge-tab edge-right" data-panel="dist" aria-controls="dist" aria-expanded="true" aria-label="Hide metrics">
+          <span class="edge-chev" aria-hidden="true"></span>
+        </button>
 
-      <div class="key">
-        <div><span class="swatch" style="background:#111"></span> stimulation target</div>
-        <div><span class="swatch" style="background:#f2c14e"></span> EEG landmark</div>
-        <div><span class="swatch" style="background:#1f77b4"></span> coil</div>
-      </div>
+        <div id="info" class="hidden"></div>
 
-      <div class="hint">drag to rotate, scroll to zoom, click a marker</div>
-    </div>
+        <div id="zoom">
+          <button id="zoom-out" type="button" title="zoom out">&minus;</button>
+          <input type="range" id="zoom-slider" min="10" max="250" step="1" value="100" aria-label="zoom" />
+          <button id="zoom-in" type="button" title="zoom in">+</button>
+          <button id="zoom-val" type="button" title="reset to fit">100%</button>
+        </div>
 
-    <div id="info" class="hidden"></div>
+        <a id="open-full" class="open-full" target="_blank" rel="noopener" hidden>Open full viewer</a>
+      </main>
 
-    <div id="dist">
-      <div class="dist-head">
+      <aside id="dist" class="panel" aria-label="aim 1 metrics">
         <h2>Aim 1 Metrics</h2>
         <div class="seg">
           <button type="button" data-metric="miss" class="on" title="distance from a placement to the MRI target">displacement</button>
@@ -74,27 +97,22 @@
           <button type="button" data-metric="tilt" title="tilt of the coil face that follows from the mark being off">tilt</button>
           <button type="button" data-metric="orient" title="total coil orientation difference, tilt plus handle yaw">orientation</button>
         </div>
-      </div>
 
-      <div class="col-head">
-        <span id="subject-label">this head</span>
-        <span class="c-num">mean</span>
-        <span class="c-num">p95</span>
-      </div>
-      <div id="dist-charts"></div>
+        <div class="col-head">
+          <span id="subject-label">this head</span>
+          <span class="c-num">mean</span>
+          <span class="c-num">p95</span>
+        </div>
+        <div id="dist-charts"></div>
 
-      <button class="disclose section" id="group-head" type="button" aria-expanded="false">
-        <span class="chev"></span><span id="group-title">across subjects</span>
-      </button>
-      <div id="group" hidden></div>
+        <button class="disclose section" id="group-head" type="button" aria-expanded="false" aria-controls="group">
+          <span class="chev" aria-hidden="true"></span><span id="group-title">Brainsight results</span>
+        </button>
+        <div id="group" hidden></div>
+      </aside>
     </div>
 
-    <div id="zoom">
-      <button id="zoom-out" type="button" title="zoom out">&minus;</button>
-      <input type="range" id="zoom-slider" min="10" max="250" step="1" value="100" />
-      <button id="zoom-in" type="button" title="zoom in">+</button>
-      <button id="zoom-val" type="button" title="reset to fit">100%</button>
-    </div>
+    <div id="fatal" role="alert" hidden></div>
 
     <script type="module" src="./main.js"></script>
   </body>

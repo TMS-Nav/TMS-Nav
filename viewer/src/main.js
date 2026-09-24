@@ -6,7 +6,11 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { PLYLoader } from "three/examples/jsm/loaders/PLYLoader.js";
 import { CSS2DRenderer, CSS2DObject } from "three/examples/jsm/renderers/CSS2DRenderer.js";
 
-import { DATASETS, GROUP } from "./datasetRegistry.js";
+import { DATASETS, AIM1 } from "./datasetRegistry.js";
+
+// the middle column between the two side panels. everything is sized off this box,
+// not the window, so hiding a panel recentres the head
+const stage = document.getElementById("stage");
 
 const SCALP_COLOR = 0xcccccc;
 const COIL_COLOR = 0x1f77b4;
@@ -20,18 +24,34 @@ const camera = new THREE.PerspectiveCamera(45, aspect(), 0.1, 10000);
 camera.up.set(0, 0, 1);
 
 const canvas = document.getElementById("c");
-// preserveDrawingBuffer so we can grab a screenshot of the preview
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
-renderer.setPixelRatio(window.devicePixelRatio);
-renderer.setSize(window.innerWidth, window.innerHeight);
+
+// no webgl (switched off, or a locked down embed) would otherwise be a silent black
+// frame, so say what is missing and stop there
+function fail(message) {
+  const box = document.getElementById("fatal");
+  box.textContent = message;
+  box.hidden = false;
+}
+
+let renderer;
+try {
+  // preserveDrawingBuffer so we can grab a screenshot of the preview
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+} catch (err) {
+  fail("This viewer needs WebGL, and this browser has it turned off. Turn on hardware acceleration or open the page in another browser.");
+  throw err;
+}
+// past 2x a retina screen only costs gpu time, it does not look any sharper
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(stage.clientWidth, stage.clientHeight);
 
 // html labels ride on top of the canvas
 const labelRenderer = new CSS2DRenderer();
-labelRenderer.setSize(window.innerWidth, window.innerHeight);
+labelRenderer.setSize(stage.clientWidth, stage.clientHeight);
 labelRenderer.domElement.style.position = "absolute";
 labelRenderer.domElement.style.top = "0";
 labelRenderer.domElement.style.pointerEvents = "none";
-document.body.appendChild(labelRenderer.domElement);
+stage.appendChild(labelRenderer.domElement);
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
@@ -131,6 +151,7 @@ const METRICS = {
 };
 
 let scalpMaterial = null; // held onto for the opacity slider
+let coilMaterial = null; // and the coil one
 const targetMeshes = []; // held onto for the variability slider
 
 // monte carlo cloud. every piece is rebuilt around its own site mean so the whole
@@ -160,7 +181,7 @@ const pointer = new THREE.Vector2();
 const plyLoader = new PLYLoader();
 
 function aspect() {
-  return window.innerWidth / window.innerHeight;
+  return Math.max(stage.clientWidth, 1) / Math.max(stage.clientHeight, 1);
 }
 
 function loadPLY(url) {
@@ -187,9 +208,15 @@ async function loadDataset(key) {
 
   const token = ++loadToken;
 
-  const [scalpGeo, coilGeo] = await Promise.all([
+  // the monte carlo json is fetched per subject rather than bundled, so the first
+  // load of an embedded page only pulls the head that is on screen
+  const [scalpGeo, coilGeo, monteCarlo] = await Promise.all([
     loadPLY(ds.scalpURL.href),
     loadPLY(ds.coilURL.href),
+    fetch(ds.monteCarloURL).then((r) => {
+      if (!r.ok) throw new Error(`monte carlo ${r.status}`);
+      return r.json();
+    }),
   ]);
   if (token !== loadToken) return; // a newer switch already won
 
@@ -200,7 +227,7 @@ async function loadDataset(key) {
   addCoil(coilGeo);
   addTargets(ds.markers.targets);
   addLandmarks(ds.markers.landmarks, ds.markers.targets);
-  if (ds.monteCarlo) addMonteCarlo(ds.monteCarlo);
+  if (monteCarlo) addMonteCarlo(monteCarlo);
   frameCamera(scalpGeo);
 
   hideInfo();
@@ -226,6 +253,7 @@ function clearScene() {
   targetMeshes.length = 0;
   mcSites.length = 0;
   scalpMaterial = null;
+  coilMaterial = null;
 }
 
 // the sliders and checkboxes survive a subject switch, the meshes do not, so push
@@ -233,6 +261,8 @@ function clearScene() {
 function restoreUiState() {
   const opacity = document.getElementById("opacity");
   if (scalpMaterial && opacity) scalpMaterial.opacity = opacity.value / 100;
+  const coilOpacity = document.getElementById("coil-opacity");
+  if (coilMaterial && coilOpacity) setCoilOpacity(coilOpacity.value / 100);
 
   for (const [id, part] of [
     ["mc-samples", "samples"],
@@ -278,12 +308,26 @@ function addScalp(geo) {
 }
 
 function addCoil(geo) {
-  // coil.ply is already placed in RAS, so it goes in as is
-  const mesh = new THREE.Mesh(
-    geo,
-    new THREE.MeshStandardMaterial({ color: COIL_COLOR, roughness: 0.4, metalness: 0.1 })
-  );
-  coilGroup.add(mesh);
+  // coil.ply is already placed in RAS, so it goes in as is. see through by default,
+  // a solid coil hides the target clouds it sits on
+  coilMaterial = new THREE.MeshStandardMaterial({
+    color: COIL_COLOR,
+    roughness: 0.4,
+    metalness: 0.1,
+    transparent: true,
+    opacity: 0.35,
+    depthWrite: false,
+  });
+  coilGroup.add(new THREE.Mesh(geo, coilMaterial));
+}
+
+// fully opaque the coil can write depth again, so it sorts properly against the head
+function setCoilOpacity(v) {
+  if (!coilMaterial) return;
+  coilMaterial.opacity = v;
+  coilMaterial.transparent = v < 1;
+  coilMaterial.depthWrite = v >= 1;
+  coilMaterial.needsUpdate = true;
 }
 
 function addTargets(targets) {
@@ -587,9 +631,9 @@ function histogramChart(site, m, xmax, shown) {
 // hold 95% of single placements. a tolerance statement about one cap, not a
 // confidence statement about the mean, which is the thing a patient experiences
 const BA_ROWS = [
-  ["along_1", "along scalp 1"],
-  ["along_2", "along scalp 2"],
-  ["normal", "in / out"],
+  ["ap", "forward"],
+  ["lr", "right"],
+  ["normal", "out"],
 ];
 
 function agreementBlock(site) {
@@ -607,24 +651,53 @@ function agreementBlock(site) {
   return el;
 }
 
-// the cross subject section. one line per target: the mean over subjects and whether
-// tost clears the margin. the per subject numbers sit behind the same line, so the
-// section stays a summary until you ask it for the detail
+// the brainsight results. the real aim 1 numbers, written by analysis/aim1_stats.py
+// off the recorded coil poses, one line per site for the metric on show. the
+// detail under a line is the rest of the numbers the script prints, as plain text.
+// nothing here until real exports have been run, and it says how to get them
+const RESULT_METRIC = {
+  miss: { pick: (b) => b.magnitudes.displacement_mm, mixed: "displacement_mm", unit: "mm", name: "displacement" },
+  pair: { pick: (b) => b.repeat.EEG && b.repeat.EEG.repeat_mm, mixed: null, unit: "mm", name: "eeg rep 1 vs rep 2" },
+  tilt: { pick: (b) => b.magnitudes.tilt_deg, mixed: "tilt_deg", unit: "deg", name: "tilt" },
+  orient: { pick: (b) => b.magnitudes.orientation_deg, mixed: "orientation_deg", unit: "deg", name: "orientation" },
+};
+
+// the signed eeg minus mri offsets, bland altman plus the two tests on the bias
+const OFFSET_ROWS = [
+  ["ap_mm", "forward mm"],
+  ["lr_mm", "right mm"],
+  ["depth_mm", "out mm"],
+  ["yaw_deg", "handle deg"],
+];
+
+const n2 = (v) => v.toFixed(2);
+const s2 = (v) => (v >= 0 ? "+" : "") + v.toFixed(2);
+const pv = (p) => (p < 0.001 ? "<0.001" : p.toFixed(3));
+
 function renderGroup() {
   const host = document.getElementById("group");
   const title = document.getElementById("group-title");
   if (!host) return;
   host.innerHTML = "";
-  if (!GROUP) return;
 
-  const which = distMetric === "tilt" || distMetric === "orient" ? "orient" : "miss";
-  const unit = which === "miss" ? "mm" : "deg";
-  if (title) title.textContent = `across subjects, n = ${GROUP.n_subjects}`;
+  if (!AIM1) {
+    if (title) title.textContent = "Brainsight results";
+    host.innerHTML =
+      `<div class="results-empty">No Brainsight data yet. Put the session exports in ` +
+      `<code>saves/brainsight/</code>, run <code>python analysis/aim1_stats.py</code>, ` +
+      `then rebuild the viewer.</div>`;
+    return;
+  }
 
-  for (const t of GROUP.targets) {
-    const test = t.tests[which];
-    if (!test || test.n < 2) continue;
-    const open = openGroup.has(t.label);
+  const rm = RESULT_METRIC[distMetric];
+  if (title) title.textContent = `Brainsight results, n = ${AIM1.n_subjects} subjects`;
+
+  for (const b of AIM1.sites) {
+    const blk = rm.pick(b);
+    if (!blk) continue;
+    const d = blk.describe;
+    const key = `${b.site}`;
+    const open = openGroup.has(key);
 
     const wrap = document.createElement("div");
     wrap.className = "site" + (open ? " open" : "");
@@ -633,16 +706,16 @@ function renderGroup() {
     head.type = "button";
     head.className = "site-head";
     head.setAttribute("aria-expanded", open ? "true" : "false");
+    const pill = blk.below
+      ? `<span class="pill ${blk.below.below ? "ok" : "no"}">${blk.below.below ? `under ${blk.below.threshold}` : "not shown"}</span>`
+      : `<span></span>`;
     head.innerHTML =
-      `<span class="c-name">` +
-      `<span class="chev"></span>` +
-      `<span class="swatch" style="background:${t.color}"></span>` +
-      `${t.label}</span>` +
-      `<span class="c-num">${test.mean.toFixed(2)} ${unit}</span>` +
-      `<span class="pill ${test.equivalent ? "ok" : "no"}">${test.equivalent ? "equivalent" : "not shown"}</span>`;
+      `<span class="c-name"><span class="chev" aria-hidden="true"></span>${b.site}</span>` +
+      `<span class="c-num">${n2(d.mean)} ${rm.unit}</span>` +
+      pill;
     head.addEventListener("click", () => {
-      if (openGroup.has(t.label)) openGroup.delete(t.label);
-      else openGroup.add(t.label);
+      if (openGroup.has(key)) openGroup.delete(key);
+      else openGroup.add(key);
       saveOpenState();
       renderGroup();
     });
@@ -651,26 +724,127 @@ function renderGroup() {
     if (open) {
       const body = document.createElement("div");
       body.className = "site-body";
-      const cells = t.rows.map((r) => `<span>${r.subject} ${r[which].toFixed(2)}</span>`).join("");
-      body.innerHTML =
-        `<div class="cells">${cells}</div>` +
-        `<div class="verdict ${test.equivalent ? "ok" : "no"}">` +
-        `95% CI ${test.ci95[0].toFixed(2)} to ${test.ci95[1].toFixed(2)} ${unit}` +
-        `<br>TOST &plusmn;${test.margin}: 90% CI ${test.ci90[0].toFixed(2)} to ${test.ci90[1].toFixed(2)}, p ${test.p_tost.toFixed(3)}` +
-        (test.t_mu0 == null
-          ? ""
-          : `<br>t vs ${test.t_mu0} ${unit}: t ${test.t.toFixed(2)}, p ${test.p.toFixed(3)}`) +
-        `</div>`;
+      let lines =
+        `<div><span class="k">${rm.name}, n ${d.n}</span></div>` +
+        `<div>mean ${n2(d.mean)} ${rm.unit}, 95% CI ${n2(d.ci95[0])} to ${n2(d.ci95[1])}</div>` +
+        `<div>sd ${n2(d.sd)}, median ${n2(d.median)}, max ${n2(d.max)}</div>`;
+      if (blk.below) {
+        lines +=
+          `<div>average under ${blk.below.threshold} ${rm.unit}: one sided p ${pv(blk.below.p)}, ` +
+          `90% CI top ${n2(blk.below.ci90[1])}</div>`;
+      }
+      body.innerHTML = `<div class="stat-list">${lines}</div>`;
+      body.appendChild(offsetTable(b));
       wrap.appendChild(body);
     }
     host.appendChild(wrap);
   }
 
-  if (GROUP.stand_in) {
+  const mm = rm.mixed && AIM1.mixed && AIM1.mixed[rm.mixed];
+  if (mm && !mm.note) {
     const note = document.createElement("div");
-    note.className = "cap";
-    note.textContent = "stand in scans, all one nominal head model. wiring, not a result.";
+    note.className = "stat-list";
+    note.innerHTML =
+      `<div><span class="k">does the site matter? mixed model, subject random</span></div>` +
+      `<div>wald chi2 ${n2(mm.wald_chi2)} on ${mm.df} df, p ${pv(mm.p)}</div>`;
     host.appendChild(note);
+  }
+
+  const cap = document.createElement("div");
+  cap.className = "cap";
+  cap.textContent = `${AIM1.n_pairs} compared placements, run ${AIM1.generated}. every number is in saves/aim1/aim1_stats.csv`;
+  host.appendChild(cap);
+}
+
+// eeg minus mri at one site. bias with its 95% ci, the 95% limits of agreement,
+// the paired t p with its fdr q, and whether tost puts the bias inside the margin
+function offsetTable(b) {
+  const el = document.createElement("table");
+  el.className = "agree";
+  let html = `<tr><th>eeg minus mri</th><th>bias</th><th>95% limits</th><th>p (q)</th><th>inside</th></tr>`;
+  for (const [key, label] of OFFSET_ROWS) {
+    const o = b.offsets[key];
+    if (!o) continue;
+    const ba = o.bland_altman;
+    const tost = o.tost;
+    const bias = o.bias;
+    html +=
+      `<tr><td>${label}</td>` +
+      `<td title="${ba.bias_ci ? `95% CI ${s2(ba.bias_ci[0])} to ${s2(ba.bias_ci[1])}` : ""}">${s2(ba.bias)}</td>` +
+      `<td>${s2(ba.loa_lo)} to ${s2(ba.loa_hi)}</td>` +
+      `<td>${bias ? `${pv(bias.p)} (${pv(bias.q)})` : "-"}</td>` +
+      `<td title="${tost ? `tost p ${pv(tost.p)}, 90% CI ${s2(tost.ci90[0])} to ${s2(tost.ci90[1])}` : ""}">` +
+      `${tost ? (tost.equivalent ? `yes, &plusmn;${tost.margin}` : "not shown") : "-"}</td></tr>`;
+  }
+  el.innerHTML = html;
+  return el;
+}
+
+// ---- panels and embed mode --------------------------------------------------------
+// both side panels run the full height and hide sideways, each from the tab on its
+// inner edge. hiding one hands its width to the head. a small frame (a phone, or a
+// page that embeds this in an iframe) starts with both hidden, ?embed=1 does the
+// same at any size and adds a link out to the full page. on a phone sized frame the
+// panels lie over the head, so only one is open at a time
+const NARROW = 760;
+const PANEL_STORAGE_KEY = "tms-nav-panels";
+
+function setupPanels() {
+  const app = document.getElementById("app");
+  const params = new URLSearchParams(window.location.search);
+  const embed = params.has("embed") && params.get("embed") !== "0";
+  const small = window.innerWidth < NARROW || window.innerHeight < 520;
+  const tabs = [...document.querySelectorAll(".edge-tab")];
+  const names = { ui: "controls", dist: "metrics" };
+
+  const isOpen = (id) => !app.classList.contains(`${id}-hidden`);
+  const setOpen = (id, open) => {
+    app.classList.toggle(`${id}-hidden`, !open);
+    const tab = tabs.find((t) => t.dataset.panel === id);
+    tab.setAttribute("aria-expanded", open ? "true" : "false");
+    tab.setAttribute("aria-label", `${open ? "Hide" : "Show"} ${names[id]}`);
+    tab.title = `${open ? "Hide" : "Show"} ${names[id]}`;
+  };
+
+  // what was last chosen, on a full size page only. an embed or a small frame always
+  // starts with the head in full view
+  let saved = {};
+  try {
+    saved = JSON.parse(localStorage.getItem(PANEL_STORAGE_KEY) || "{}");
+  } catch {
+    // storage blocked, both start open
+  }
+  for (const id of Object.keys(names)) {
+    setOpen(id, embed || small ? false : saved[id] !== false);
+  }
+
+  for (const tab of tabs) {
+    tab.addEventListener("click", () => {
+      const id = tab.dataset.panel;
+      const open = !isOpen(id);
+      if (open && window.innerWidth < NARROW) {
+        for (const other of Object.keys(names)) if (other !== id) setOpen(other, false);
+      }
+      setOpen(id, open);
+      if (!embed && window.innerWidth >= NARROW) {
+        try {
+          localStorage.setItem(
+            PANEL_STORAGE_KEY,
+            JSON.stringify({ ui: isOpen("ui"), dist: isOpen("dist") })
+          );
+        } catch {
+          // the session still works, it just forgets
+        }
+      }
+    });
+  }
+
+  if (embed) {
+    const link = document.getElementById("open-full");
+    const url = new URL(window.location.href);
+    url.searchParams.delete("embed");
+    link.href = url.toString();
+    link.hidden = false;
   }
 }
 
@@ -819,8 +993,9 @@ function syncZoomUi() {
 }
 
 function onClick(event) {
-  pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
-  pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
+  const box = renderer.domElement.getBoundingClientRect();
+  pointer.x = ((event.clientX - box.left) / box.width) * 2 - 1;
+  pointer.y = -((event.clientY - box.top) / box.height) * 2 + 1;
 
   raycaster.setFromCamera(pointer, camera);
   const hits = raycaster.intersectObjects(
@@ -846,10 +1021,17 @@ function hideInfo() {
 }
 
 function onResize() {
-  camera.aspect = aspect();
+  const w = stage.clientWidth;
+  const h = stage.clientHeight;
+  if (!w || !h) return;
+  camera.aspect = w / h;
   camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  labelRenderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setSize(w, h);
+  labelRenderer.setSize(w, h);
+  // setSize clears the canvas, so draw straight away rather than wait for the next
+  // animation frame, or the head blinks out while a panel slides
+  renderer.render(scene, camera);
+  labelRenderer.render(scene, camera);
 }
 
 function bindUI() {
@@ -873,6 +1055,10 @@ function bindUI() {
   toggle("toggle-targets", targetGroup);
   toggle("toggle-landmarks", landmarkGroup);
   toggle("toggle-mc", mcGroup);
+
+  document.getElementById("coil-opacity").addEventListener("input", (e) => {
+    setCoilOpacity(e.target.value / 100);
+  });
 
   document.getElementById("opacity").addEventListener("input", (e) => {
     if (scalpMaterial) scalpMaterial.opacity = e.target.value / 100;
@@ -917,7 +1103,9 @@ function bindUI() {
     b.addEventListener("click", () => setDistMetric(b.dataset.metric));
   }
 
-  // the two disclosure headers, the simulation settings and the cross subject block
+  setupPanels();
+
+  // the two disclosure headers, the simulation settings and the results block
   for (const [headId, bodyId] of [["mc-note-head", "mc-note"], ["group-head", "group"]]) {
     const head = document.getElementById(headId);
     const body = document.getElementById(bodyId);
@@ -953,7 +1141,9 @@ function bindUI() {
   controls.addEventListener("change", () => syncZoomUi());
 
   renderer.domElement.addEventListener("click", onClick);
-  window.addEventListener("resize", onResize);
+  // the stage changes size when a panel slides in or out as well as with the window,
+  // and a resize observer sees both, every frame of the slide
+  new ResizeObserver(onResize).observe(stage);
 }
 
 function animate() {
