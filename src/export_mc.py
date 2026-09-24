@@ -16,14 +16,15 @@ from pathlib import Path
 import numpy as np
 
 from src.align import similarity_transform
-from src.landmark_noise import NoiseModel, ellipsoid_normal, simulate_caps, tangent_basis
+from src.landmark_noise import NoiseModel, ellipsoid_normal, simulate_caps
 from src.stats import (
     NAV_TRE_MM,
+    anatomical_axes,
     bland_altman,
     coil_orientation_error,
+    describe,
     miss_distances,
     pair_distances,
-    summary,
 )
 from src.ten_twenty import HeadDimensions, fit_ellipsoid
 
@@ -46,8 +47,9 @@ N_KEEP = 400
 # mahalanobis radii to draw shells at. 1/2/3 sigma
 SHELLS = (1.0, 2.0, 3.0)
 
-# the three signed directions bland altman is reported in, local scalp frame
-COMPONENTS = ("along_1", "along_2", "normal")
+# the three signed directions bland altman is reported in, the same anatomical axes
+# the real brainsight comparison uses (src/aim1.py). forward, to the right, outward
+COMPONENTS = ("ap", "lr", "normal")
 
 
 def monte_carlo_cloud(landmarks, targets, dims=NOMINAL_DIMS, noise=None,
@@ -125,10 +127,11 @@ def monte_carlo_cloud(landmarks, targets, dims=NOMINAL_DIMS, noise=None,
         normals = np.array([ellipsoid_normal(axes, p) for p in samples[key]])
         tilt, orient = coil_orientation_error(ellipsoid_normal(axes, truth[key]), normals, yaws[key])
 
-        # signed offsets in the local frame at the true site, the bland altman
-        # inputs. two along the scalp and one in and out of it
-        e1, e2, nvec = tangent_basis(axes, truth[key])
-        local = np.stack([model_offsets @ e1, model_offsets @ e2, model_offsets @ nvec], axis=1)
+        # signed offsets at the true site, the bland altman inputs. forward and to
+        # the right along the scalp, and in and out of it. the model frame is x
+        # right, y front, z up, same as RAS, so the axes mean the same thing
+        ap, lr, nvec = anatomical_axes(ellipsoid_normal(axes, truth[key]))
+        local = np.stack([model_offsets @ ap, model_offsets @ lr, model_offsets @ nvec], axis=1)
 
         sites.append({
             "name": t.name,
@@ -145,17 +148,19 @@ def monte_carlo_cloud(landmarks, targets, dims=NOMINAL_DIMS, noise=None,
             "rms_mm": round(float(np.sqrt((miss**2).mean())), 3),
             "p95_mm": round(float(np.percentile(miss, 95)), 3),
             # every draw, not just the shipped subset, so the histograms are the
-            # real thing. a few hundred floats per site
+            # real thing. a few hundred floats per site. no cis on draws, they only
+            # shrink with how long the loop ran, see the note in src/stats.py
             "miss_mm": _list(miss),
-            "miss_stats": summary(miss),
+            "miss_stats": describe(miss, ci=False, digits=3),
             "pair_mm": _list(pair),
-            "pair_stats": summary(pair),
+            "pair_stats": describe(pair, ci=False, digits=3),
             "tilt_deg": _list(tilt),
-            "tilt_stats": summary(tilt),
+            "tilt_stats": describe(tilt, ci=False, digits=3),
             "orient_deg": _list(orient),
-            "orient_stats": summary(orient),
+            "orient_stats": describe(orient, ci=False, digits=3),
             "bland_altman": {
-                name: bland_altman(local[:, i]) for i, name in enumerate(COMPONENTS)
+                name: bland_altman(local[:, i], ci=False, digits=3)
+                for i, name in enumerate(COMPONENTS)
             },
         })
 
@@ -188,8 +193,9 @@ def export_monte_carlo(scene, out_dir, **kw):
     out_dir.mkdir(parents=True, exist_ok=True)
 
     payload = monte_carlo_cloud(scene.landmarks, scene.targets, **kw)
+    # compact, the browser fetches this file as is, whitespace would triple it
     with open(out_dir / "montecarlo.json", "w") as f:
-        json.dump(payload, f, indent=2)
+        json.dump(payload, f, separators=(",", ":"))
 
     return out_dir / "montecarlo.json", payload
 

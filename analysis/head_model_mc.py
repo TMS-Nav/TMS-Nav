@@ -5,13 +5,16 @@
 # from where a perfect measurement would have put it. that spread is the cap drawing
 # error that analysis/sample_size.py currently just guesses at.
 #
-# the inference lives at the SUBJECT level, not the draw level. see the note above
-# subject_test for why, it matters and he will ask.
+# the inference lives at the SUBJECT level, not the draw level. see the note in
+# src/stats.py above describe for why, it matters and he will ask. the tests on real
+# subjects are analysis/aim1_stats.py.
 import sys
 from pathlib import Path
 
 import numpy as np
 from scipy import stats
+from statsmodels.stats.power import TTestPower
+from statsmodels.stats.weightstats import DescrStatsW
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -20,13 +23,7 @@ from src.landmark_noise import (  # noqa: E402
     simulate_caps,
     tangent_basis,
 )
-from src.stats import (  # noqa: E402
-    BIAS_MM,
-    EQ_MARGIN_MM,
-    NAV_TRE_MM,
-    subject_test,
-    subject_tost,
-)
+from src.stats import BIAS_MM, NAV_TRE_MM  # noqa: E402
 from src.ten_twenty import HeadDimensions, electrode_positions, fit_ellipsoid  # noqa: E402
 
 # a typical adult head, mm. nasion to inion over the vertex, ear to ear over the
@@ -34,8 +31,7 @@ from src.ten_twenty import HeadDimensions, electrode_positions, fit_ellipsoid  #
 TRUE_DIMS = HeadDimensions(nasion_inion=360.0, lpa_rpa=350.0, circumference=570.0)
 
 # thresholds, one copy in src/stats.py so every script agrees
-BIAS = BIAS_MM            # mm, smallest average offset worth detecting
-EQ_MARGIN = EQ_MARGIN_MM  # mm, how close counts as equivalent
+BIAS = BIAS_MM            # mm, smallest systematic shift worth detecting
 
 # the two study targets. f3 is the dlpfc proxy from herwig 2003, sma is the midline
 # point in front of cz used by the mantovani 2010 protocol
@@ -79,6 +75,8 @@ def tolerance_region(samples, truth):
     # rank of the covariance, not a flat 3, or the region badly over covers
     tol = max(eigval.max(), 1e-30) * 1e-6
     rank = max(int((eigval > tol).sum()), 1)
+    # a chi squared quantile, the size of the 95% region. a lookup, not a test,
+    # statsmodels has no function for it
     scale = float(stats.chi2.ppf(0.95, df=rank))
 
     semi_axes = np.sqrt(eigval * scale)
@@ -105,11 +103,6 @@ def tolerance_region(samples, truth):
     }
 
 
-# subject_test and subject_tost used to live here. they moved to src/stats.py so the
-# viewer export can run the same test on the stand in subjects, the docstrings there
-# say why the test runs on subjects and never on draws
-
-
 def n_from_formula(sigma, effect, z_alpha=1.96, z_beta=0.84):
     """The closed form n from sample_size.py, repeated here so we can check it."""
 
@@ -117,42 +110,37 @@ def n_from_formula(sigma, effect, z_alpha=1.96, z_beta=0.84):
 
 
 def exact_power(sigma, effect, n, alpha=0.05):
-    """Exact power of a two sided one sample t test, no normal approximation.
+    """Exact power of a two sided paired t test, no normal approximation.
 
-    under the alternative the t statistic is not a t, it is a NONCENTRAL t with
-    noncentrality effect*sqrt(n)/sigma. the closed form in sample_size.py quietly
-    swaps that for a shifted normal, which is fine once n is large and is not fine
-    at n below about 30.
+    statsmodels TTestPower. under the alternative the t statistic is not a t, it is
+    a NONCENTRAL t with noncentrality effect*sqrt(n)/sigma. the closed form in
+    sample_size.py quietly swaps that for a shifted normal, which is fine once n is
+    large and is not fine at n below about 30.
     """
 
-    df = n - 1
-    ncp = effect * np.sqrt(n) / sigma
-    crit = float(stats.t.ppf(1.0 - alpha / 2.0, df))
-    return float(stats.nct.sf(crit, df, ncp) + stats.nct.cdf(-crit, df, ncp))
+    return float(TTestPower().power(effect_size=effect / sigma, nobs=n, alpha=alpha,
+                                    alternative="two-sided"))
 
 
-def n_from_t(sigma, effect, alpha=0.05, power=0.80, n_max=10000):
-    """Smallest n whose exact power clears the target.
+def n_from_t(sigma, effect, alpha=0.05, power=0.80):
+    """Smallest n whose exact power clears the target, statsmodels TTestPower.
 
-    solving for n directly would need t quantiles that themselves depend on n, and
-    iterating on that oscillates between two neighbouring values instead of
-    settling. searching upward has no such problem and gives the exact answer.
+    solve_power gives a fractional n, and rounding it up is the smallest whole
+    number of subjects that clears the power.
     """
 
-    for n in range(2, n_max):
-        if exact_power(sigma, effect, n, alpha) >= power:
-            return n
-    raise ValueError(f"no n below {n_max} reaches power {power} at sigma {sigma}")
+    return int(np.ceil(TTestPower().solve_power(effect_size=effect / sigma, alpha=alpha,
+                                                power=power, alternative="two-sided")))
 
 
 def power_by_simulation(sigma, effect, n_subjects, rng, n_reps=20000, alpha=0.05):
-    """Empirical power of a one sample t test, the check on n_from_formula."""
+    """Empirical power of the paired t test, the check on n_from_formula.
 
-    draws = rng.normal(effect, sigma, size=(n_reps, n_subjects))
-    mean = draws.mean(axis=1)
-    se = draws.std(axis=1, ddof=1) / np.sqrt(n_subjects)
-    t = mean / se
-    p = 2.0 * stats.t.sf(np.abs(t), n_subjects - 1)
+    every simulated study is one column, statsmodels DescrStatsW tests them all at once
+    """
+
+    draws = rng.normal(effect, sigma, size=(n_subjects, n_reps))
+    p = DescrStatsW(draws).ttest_mean(0.0)[1]
     return float((p < alpha).mean())
 
 
@@ -269,28 +257,6 @@ def main():
     print(" assumes you know the sd, but you are estimating it from the same handful of")
     print(" subjects, so the real test uses t and needs a bigger n. sample_size.py now")
     print(" carries both columns, this is the check that the fix in there is right.")
-
-    # --- the subject level test, on stand in subject means so the wiring is visible -----
-    print()
-    print("subject level test, stand in numbers until there are real subjects")
-    per_subject_sd = float(np.sqrt(sigma**2 + NAV_TRE_MM**2))
-    subj = rng.normal(1.30, per_subject_sd, size=24)  # 24 subjects, one mean miss each
-    tt = subject_test(subj, mu0=BIAS)
-    print(f"  n = {tt['n']} subjects, mean miss {tt['mean']:.2f} mm, 95% CI"
-          f" [{tt['ci'][0]:.2f}, {tt['ci'][1]:.2f}] mm")
-    print(f"  t = {tt['t']:.2f} on {tt['df']} df, p = {tt['p']:.3f}"
-          f"   (null: the mean miss equals the {BIAS} mm we care about)")
-    eq = subject_tost(subj, margin=EQ_MARGIN)
-    print(f"  TOST against +/- {EQ_MARGIN} mm: p = {eq['p']:.4f}, 90% CI"
-          f" [{eq['ci90'][0]:.2f}, {eq['ci90'][1]:.2f}] mm, equivalent = {eq['equivalent']}")
-    print("  (TOST is the one that can make a positive claim. a plain t test that")
-    print("   fails to reject only means you did not look hard enough)")
-
-    # hand rolled t against scipy, they must agree
-    ref = stats.ttest_1samp(subj, BIAS)
-    assert abs(tt["t"] - float(ref.statistic)) < 1e-9, "hand rolled t disagrees with scipy"
-    assert abs(tt["p"] - float(ref.pvalue)) < 1e-12, "hand rolled p disagrees with scipy"
-    print("  hand rolled t and p match scipy.stats.ttest_1samp")
 
 
 if __name__ == "__main__":

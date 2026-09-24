@@ -7,10 +7,19 @@
 # orientation once the handle is turned too. all four are distributions, and the
 # figure here shows them as such.
 #
-# the subject level tests live here as well. they run on SUBJECTS, one number per
-# head, never on draws. see subject_test for why, it matters.
+# the statistics live here as well, every one of them a call into statsmodels. each
+# helper answers one question and its docstring says which call does the work. they
+# run on SUBJECTS, one number per subject per site, never on monte carlo draws. see
+# the note above describe for why, it matters.
+import warnings
+
 import numpy as np
-from scipy import stats as sps
+import pandas as pd
+import statsmodels.formula.api as smf
+from scipy.stats import t as t_dist
+from statsmodels.stats.descriptivestats import sign_test
+from statsmodels.stats.multitest import multipletests
+from statsmodels.stats.weightstats import DescrStatsW
 import matplotlib
 
 matplotlib.use("Agg")
@@ -18,12 +27,14 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 
 # --- the thresholds aim 1 is judged against, one copy for the whole project -------
-# smallest average offset worth detecting, the null for the one sample t test on a
-# displacement magnitude, which cannot be negative so testing against 0 is meaningless
+# smallest systematic shift worth detecting, the effect the sample size is powered
+# for. the paired t test asks whether the eeg minus mri offset is 0, this is how big
+# an offset it has to be able to see
 BIAS_MM = 1.5
-# how close counts as equivalent, the tost margin on displacement
+# how close counts as equivalent, mm. the tost margin on each signed offset, and the
+# line the average displacement is tested against
 EQ_MARGIN_MM = 2.0
-# and on coil orientation, degrees. total rotation between the two coil frames
+# the same two jobs for angles, degrees. signed handle yaw and total orientation
 EQ_MARGIN_DEG = 10.0
 # brainsight's own registration error, target registration error, taken as fixed
 # and added in quadrature to the cap error. double check against the manual
@@ -104,6 +115,26 @@ def rotation_angle(R):
     return np.degrees(np.arccos(np.clip((tr - 1.0) / 2.0, -1.0, 1.0)))
 
 
+def anatomical_axes(outward_normal):
+    """(ap, lr, n) at a scalp point: forward and rightward laid flat on the scalp, and out.
+
+    ap is RAS anterior (+y) with its part along the normal taken out, lr = ap x n,
+    which points to the subject's right, and n is the outward normal. an offset
+    dotted with them reads as mm forward, mm to the right and mm further out, the
+    same three numbers whatever the site. works in any frame with x right, y front,
+    z up, which covers scanner RAS and the model head
+    """
+
+    n = np.asarray(outward_normal, dtype=float)
+    n = n / np.linalg.norm(n)
+    ap = np.array([0.0, 1.0, 0.0]) - n * n[1]
+    if np.linalg.norm(ap) < 1e-6:
+        # normal pointing straight forward or back, not a study site, use up instead
+        ap = np.array([0.0, 0.0, 1.0]) - n * n[2]
+    ap = ap / np.linalg.norm(ap)
+    return ap, np.cross(ap, n), n
+
+
 def coil_orientation_error(true_normal, normals, yaw_deg):
     """Tilt and total orientation error of a coil sat tangent to a mislaid mark.
 
@@ -130,114 +161,233 @@ def coil_orientation_error(true_normal, normals, yaw_deg):
     return tilt, total
 
 
-# --- descriptive ------------------------------------------------------------------
-def summary(d):
-    """The handful of numbers that describe a distance or angle distribution."""
+# --- the statistics ------------------------------------------------------------------
+# why the tests run on subjects and never on draws. the standard error is s/sqrt(n),
+# and on monte carlo draws n is how many times you chose to run the loop, so the p
+# value is something you set rather than something you measure. simulate ten times
+# longer and p drops by orders of magnitude without a single new head being
+# measured. the simulation is there to estimate the spread. the tests run on real
+# subjects, one number per subject per site (the mean of their reps), so n is people.
 
-    d = np.asarray(d, dtype=float)
-    return {
-        "n": int(len(d)),
-        "mean": round(float(d.mean()), 3),
-        "sd": round(float(d.std(ddof=1)), 3) if len(d) > 1 else 0.0,
-        "median": round(float(np.median(d)), 3),
-        "rms": round(float(np.sqrt((d**2).mean())), 3),
-        "p95": round(float(np.percentile(d, 95)), 3),
-        "max": round(float(d.max()), 3),
-    }
+# the 97.5% point of the normal, the number bland and altman round to 1.96
+Z95 = 1.959963984540054
 
 
-def bland_altman(diff, alpha=0.05):
-    """Bias and limits of agreement of a set of signed differences.
+def _descr(x):
+    # ddof=1 so .std is the sample sd. the tests and cis in DescrStatsW correct for
+    # it themselves, so they come out the same either way
+    return DescrStatsW(np.asarray(x, dtype=float), ddof=1)
 
-    bias is the mean, the limits are bias +/- 1.96 sd, so 95% of single differences
-    are expected inside them. on monte carlo draws this is a statement about where
-    ONE placement lands, a tolerance, which is the thing a patient experiences. the
-    ci on the bias uses t with n-1 df
+
+def _round(out, digits):
+    if digits is None:
+        return out
+
+    def r(v):
+        if isinstance(v, (list, tuple)):
+            return [r(u) for u in v]
+        if isinstance(v, float):
+            return round(v, digits)
+        return v
+
+    return {k: r(v) for k, v in out.items()}
+
+
+def describe(x, ci=True, digits=None):
+    """What the numbers look like. n, mean, sd, median, rms, p95, max, and the 95% ci.
+
+    statsmodels DescrStatsW: mean, std, quantile, tconfint_mean. the ci is the range
+    of true means the data do not rule out, t based. leave it out (ci=False) on
+    monte carlo draws, where it only shrinks with the number of draws
     """
 
-    d = np.asarray(diff, dtype=float)
-    n = len(d)
-    bias = float(d.mean())
-    sd = float(d.std(ddof=1)) if n > 1 else 0.0
-    z = float(sps.norm.ppf(1.0 - alpha / 2.0))
-    half = float(sps.t.ppf(1.0 - alpha / 2.0, n - 1)) * sd / np.sqrt(n) if n > 1 else 0.0
-    return {
+    x = np.asarray(x, dtype=float)
+    d = _descr(x)
+    n = len(x)
+    median, p95 = (float(v) for v in d.quantile([0.5, 0.95], return_pandas=False))
+    out = {
         "n": int(n),
-        "bias": round(bias, 3),
-        "sd": round(sd, 3),
-        "loa_lo": round(bias - z * sd, 3),
-        "loa_hi": round(bias + z * sd, 3),
-        "bias_ci": [round(bias - half, 3), round(bias + half, 3)],
+        "mean": float(d.mean),
+        "sd": float(d.std) if n > 1 else 0.0,
+        "median": median,
+        "rms": float(np.sqrt((x**2).mean())),
+        "p95": p95,
+        "max": float(x.max()),
+    }
+    if ci:
+        lo, hi = d.tconfint_mean(alpha=0.05) if n > 1 else (out["mean"], out["mean"])
+        out["ci95"] = [float(lo), float(hi)]
+    return _round(out, digits)
+
+
+def below_threshold(x, threshold, alpha=0.05):
+    """Is the AVERAGE smaller than the threshold? One sided t test.
+
+    statsmodels DescrStatsW.ttest_mean(threshold, alternative="smaller"). the null
+    is that the true mean is at or above the threshold, so a small p says it is
+    below. for a distance or a total angle, which cannot go negative, this is the
+    whole of what an equivalence test can say. the same verdict reads off the 90%
+    ci: its upper end is the one sided 95% bound, and the mean is below the line
+    exactly when that bound is. note it is about the mean, one placement can still
+    land further out, the limits of agreement are what speak to that
+    """
+
+    d = _descr(x)
+    t, p, df = d.ttest_mean(threshold, alternative="smaller")
+    lo, hi = d.tconfint_mean(alpha=2 * alpha)
+    return {
+        "threshold": float(threshold),
+        "t": float(t), "df": float(df), "p": float(p),
+        "ci90": [float(lo), float(hi)],
+        "below": bool(p < alpha),
     }
 
 
-# --- the subject level tests -----------------------------------------------------
-def subject_test(values, mu0=BIAS_MM, alpha=0.05):
-    """One sample t test of subject level means against mu0. n is SUBJECTS.
+def bias_test(diff, alpha=0.05):
+    """Is there a systematic eeg minus mri shift? Paired t test of the differences vs 0.
 
-    do not run this on monte carlo draws. the standard error is s/sqrt(n) and n
-    there is the number of times you chose to run the loop, so the p value is
-    something you set rather than something you measure. simulate ten times longer
-    and p drops by orders of magnitude without a single new head being measured.
-    the simulation is there to estimate the spread, sigma. the spread then feeds
-    the sample size formula, and the t test runs once, on real subjects.
-
-    mu0 is whatever null the question needs. for a signed difference between two
-    localization methods that is 0. for a displacement magnitude, which cannot be
-    negative, testing against 0 is meaningless, so use the bias threshold instead.
+    statsmodels DescrStatsW.ttest_mean(0), two sided. diff is already eeg minus mri
+    per subject, so a one sample test on it is the paired t test. p_sign is the
+    same question asked by statsmodels sign_test, which only counts how many
+    differences are above and below 0, so it does not need the differences to be
+    normal. if the two disagree, trust neither on its own and look at the data
     """
 
-    v = np.asarray(values, dtype=float)
-    n = len(v)
-    if n < 2:
-        raise ValueError(f"need at least 2 subjects for a t test, got {n}")
+    d = _descr(diff)
+    t, p, df = d.ttest_mean(0.0)
+    _, p_sign = sign_test(np.asarray(diff, dtype=float), mu0=0.0)
+    return {"t": float(t), "df": float(df), "p": float(p), "p_sign": float(p_sign),
+            "shift": bool(p < alpha)}
 
-    df = n - 1
-    mean = float(v.mean())
-    se = float(v.std(ddof=1)) / np.sqrt(n)   # ddof=1, the sample sd, not the population one
 
-    t = (mean - mu0) / se if se > 0 else float("inf")
-    p = 2.0 * float(sps.t.sf(abs(t), df))
-    half = float(sps.t.ppf(1.0 - alpha / 2.0, df)) * se
+def equivalence(diff, margin, alpha=0.05):
+    """Is the systematic shift inside +/- margin? Two one sided tests, TOST.
 
-    return {
-        "n": n, "df": df, "mean": mean, "sd": float(v.std(ddof=1)), "se": se,
-        "t": float(t), "p": p, "mu0": float(mu0),
-        "ci": (mean - half, mean + half),
+    statsmodels DescrStatsW.ttost_mean(-margin, margin). a plain t test that fails to
+    reject says nothing, absence of evidence. tost turns the question round, the
+    null is that the shift is at least as big as the margin on one side or the
+    other, and rejecting both is a positive claim that it is not. p is the larger of
+    the two one sided p values. the same verdict: the 90% ci sits inside the margin
+    """
+
+    d = _descr(diff)
+    p, _, _ = d.ttost_mean(-margin, margin)
+    lo, hi = d.tconfint_mean(alpha=2 * alpha)
+    return {"margin": float(margin), "p": float(p), "ci90": [float(lo), float(hi)],
+            "equivalent": bool(p < alpha)}
+
+
+def bland_altman(diff, alpha=0.05, ci=True, digits=None):
+    """Bias and 95% limits of agreement of a set of signed differences.
+
+    bias is the mean difference, the limits are bias +/- 1.96 sd, where 95% of single
+    differences are expected to land. that makes the limits the answer to "how far
+    apart can the two methods be for one person", which is what gets compared with
+    the clinical threshold. mean, sd and the bias ci are statsmodels DescrStatsW.
+
+    the ci on each limit is bland and altman 1986, se = sd * sqrt(1/n + 1.96^2/(2(n-1))).
+    it needs a t critical value, and statsmodels has no public function for one,
+    so that single quantile comes from scipy.stats.t.ppf
+    """
+
+    x = np.asarray(diff, dtype=float)
+    d = _descr(x)
+    n = len(x)
+    bias = float(d.mean)
+    sd = float(d.std) if n > 1 else 0.0
+    out = {
+        "n": int(n),
+        "bias": bias,
+        "sd": sd,
+        "loa_lo": bias - Z95 * sd,
+        "loa_hi": bias + Z95 * sd,
     }
+    if ci and n > 2:
+        lo, hi = d.tconfint_mean(alpha=alpha)
+        tc = float(t_dist.ppf(1.0 - alpha / 2.0, n - 1))
+        half = tc * sd * np.sqrt(1.0 / n + Z95**2 / (2.0 * (n - 1)))
+        out["bias_ci"] = [float(lo), float(hi)]
+        out["loa_lo_ci"] = [out["loa_lo"] - half, out["loa_lo"] + half]
+        out["loa_hi_ci"] = [out["loa_hi"] - half, out["loa_hi"] + half]
+    return _round(out, digits)
 
 
-def subject_tost(values, margin=EQ_MARGIN_MM, alpha=0.05):
-    """Two one sided tests. Rejecting BOTH is what buys you 'equivalent'.
+def fdr(pvals, q=0.05):
+    """Benjamini hochberg adjusted p values (q values) and which survive at level q.
 
-    a plain t test that fails to reject says nothing, absence of evidence. tost
-    turns the question round, the null is that the difference is at least as big
-    as the margin, and rejecting that is a positive claim of equivalence. the
-    equivalent statement is that the 90% ci (1 - 2 alpha) sits inside the margin,
-    so the ci is returned too, it is the thing the proposal reports.
+    statsmodels multipletests(method="fdr_bh"). sort the p values, the k-th smallest
+    is compared with k/m * q, so the more tests there are the stronger each one has
+    to be. a q value below 0.05 means the test survives the correction
     """
 
-    v = np.asarray(values, dtype=float)
-    n = len(v)
-    if n < 2:
-        raise ValueError(f"need at least 2 subjects for tost, got {n}")
-    df = n - 1
-    mean = float(v.mean())
-    se = float(v.std(ddof=1)) / np.sqrt(n)
+    p = np.asarray(pvals, dtype=float)
+    if len(p) == 0:
+        return [], []
+    reject, qvals, _, _ = multipletests(p, alpha=q, method="fdr_bh")
+    return [float(v) for v in qvals], [bool(v) for v in reject]
 
-    if se > 0:
-        p_lower = float(sps.t.sf((mean + margin) / se, df))   # H0: mean <= -margin
-        p_upper = float(sps.t.cdf((mean - margin) / se, df))  # H0: mean >= +margin
-    else:
-        p_lower = p_upper = 0.0 if abs(mean) < margin else 1.0
-    worst = max(p_lower, p_upper)
-    half = float(sps.t.ppf(1.0 - alpha, df)) * se
 
+def site_mixed_model(df, value, subject="subject", site="site", alpha=0.05):
+    """Does the error depend on the target? Linear mixed model, target fixed, subject random.
+
+    statsmodels mixedlm("value ~ 0 + C(site)", groups=subject), fit by reml. each
+    subject contributes several rows (sites, reps), and rows from one head are not
+    independent, so every subject gets its own random intercept. the fixed part is
+    one mean per site. the question "does site matter" is a wald test that all the
+    site means are equal. warnings from the fit (a random intercept pinned at 0, no
+    convergence) are passed back in the result rather than hidden
+    """
+
+    data = pd.DataFrame({
+        "subject": df[subject].astype(str),
+        "site": df[site].astype(str),
+        "value": pd.to_numeric(df[value], errors="coerce"),
+    }).dropna()
+    sites = sorted(data["site"].unique())
+    n_subj = int(data["subject"].nunique())
+    if len(sites) < 2 or n_subj < 3:
+        return {"note": f"needs 2 sites and 3 subjects, has {len(sites)} and {n_subj}"}
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        fit = smf.mixedlm("value ~ 0 + C(site)", data, groups=data["subject"]).fit(reml=True)
+
+        # all site means equal: mean_i - mean_0 = 0 for every other site. the
+        # columns past the fixed effects belong to the random intercept and stay 0.
+        # the covariance of that variance term is often nan (it sits on its 0
+        # boundary), and 0 * nan is still nan, so those rows are zeroed. the test
+        # only ever reads the fixed effect block
+        k_fe = len(fit.fe_params)
+        R = np.zeros((k_fe - 1, len(fit.params)))
+        for i in range(1, k_fe):
+            R[i - 1, 0], R[i - 1, i] = -1.0, 1.0
+        cov = np.asarray(fit.cov_params(), dtype=float).copy()
+        if np.isnan(cov[:k_fe, :k_fe]).any():
+            return {"note": "the fixed effect covariance did not come out, the model did not fit"}
+        cov[k_fe:, :] = 0.0
+        cov[:, k_fe:] = 0.0
+        wald = fit.wald_test(R, cov_p=cov, scalar=True, use_f=False)
+
+    ci = fit.conf_int(alpha=alpha)
+    means = {}
+    for name, est in fit.fe_params.items():
+        key = name.split("[", 1)[1].rstrip("]")
+        means[key] = {"mean": float(est), "se": float(fit.bse_fe[name]),
+                      "ci95": [float(ci.loc[name, 0]), float(ci.loc[name, 1])]}
+
+    p = float(np.squeeze(wald.pvalue))
     return {
-        "n": n, "mean": mean, "margin": float(margin),
-        "p_lower": p_lower, "p_upper": p_upper, "p": worst,
-        "ci90": (mean - half, mean + half),
-        "equivalent": bool(worst < alpha),
+        "n_rows": int(len(data)),
+        "n_subjects": n_subj,
+        "sites": means,
+        "subject_sd": float(np.sqrt(max(float(fit.cov_re.iloc[0, 0]), 0.0))),
+        "residual_sd": float(np.sqrt(fit.scale)),
+        "wald_chi2": float(np.squeeze(wald.statistic)),
+        "df": int(k_fe - 1),
+        "p": p,
+        "site_matters": bool(p < alpha),
+        "converged": bool(fit.converged),
+        "warnings": sorted({str(w.message).splitlines()[0] for w in caught}),
     }
 
 
@@ -321,16 +471,16 @@ if __name__ == "__main__":
     assert abs(tilt[0] - 7.0) < 1e-9 and total[0] > 7.0 and total[0] < 12.0
     print("rotation helpers ok, tilt 7 + yaw 5 gives total", round(float(total[0]), 3), "deg")
 
-    # hand rolled tests against scipy
-    x = rng.normal(1.3, 1.7, size=24)
-    tt = subject_test(x, mu0=BIAS_MM)
-    ref = sps.ttest_1samp(x, BIAS_MM)
-    assert abs(tt["t"] - float(ref.statistic)) < 1e-9
-    assert abs(tt["p"] - float(ref.pvalue)) < 1e-12
-    eq = subject_tost(x, margin=EQ_MARGIN_MM)
+    # the statsmodels answers against the textbook formulas. tests/test_stats.py
+    # does this properly, this is the quick look
+    x = rng.normal(0.4, 1.7, size=24)
+    n, m, s = len(x), x.mean(), x.std(ddof=1)
+    bt = bias_test(x)
+    assert abs(bt["t"] - m / (s / np.sqrt(n))) < 1e-9, "paired t is not mean / (sd / sqrt n)"
+    eq = equivalence(x, EQ_MARGIN_MM)
     lo, hi = eq["ci90"]
     assert eq["equivalent"] == (lo > -EQ_MARGIN_MM and hi < EQ_MARGIN_MM), \
         "tost verdict and the 90% ci disagree"
     ba = bland_altman(x)
-    assert abs(ba["loa_hi"] - ba["loa_lo"] - 2 * 1.96 * ba["sd"]) < 1e-2
-    print("t, tost and bland altman ok")
+    assert abs(ba["loa_hi"] - ba["loa_lo"] - 2 * Z95 * s) < 1e-9
+    print("paired t, tost and bland altman ok")

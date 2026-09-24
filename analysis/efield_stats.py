@@ -4,16 +4,15 @@
 #   python analysis/efield_stats.py                 synthetic table
 #   python analysis/efield_stats.py saves/efield/efield_long.csv
 #
-# what the proposal asks for and where it is done here:
+# what the proposal asks for and where it is done here, every test through the
+# statsmodels helpers in src/stats.py:
 #   primary    paired percentage difference in mean roi |E|, eeg vs mri
-#              -> tost per site with a 90% ci inside +/- PCT_MARGIN (subject_tost)
+#              -> tost per site with a 90% ci inside +/- PCT_MARGIN (equivalence)
 #   secondary  paired t on the primary for bias, the other paired metrics
-#              -> subject_test, benjamini hochberg across the secondary tests
+#              -> bias_test, benjamini hochberg across the secondary tests (fdr)
 #   agreement  bland altman on mean roi |E|, V/m
-#   mixed      pct diff ~ site, random intercept per participant, statsmodels
-#              MixedLM when it is installed, else a note on what it would fit
-#   sensitivity bootstrap ci on the mean pct diff, for when the differences
-#              are not normal
+#   mixed      pct diff ~ site, random intercept per participant (site_mixed_model)
+#   sensitivity sign test on the paired differences, for when they are not normal
 import sys
 from pathlib import Path
 
@@ -21,8 +20,17 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import pandas as pd  # noqa: E402
+
 from efield.metrics import PAIRED_METRICS, PCT_MARGIN, read_csv, site_stats, subject_means  # noqa: E402
-from src.stats import bland_altman, subject_test, subject_tost  # noqa: E402
+from src.stats import (  # noqa: E402
+    bias_test,
+    bland_altman,
+    describe,
+    equivalence,
+    fdr,
+    site_mixed_model,
+)
 
 SITES = ("SMA", "F4")
 REPS = (1, 2)
@@ -37,9 +45,6 @@ SYN_MRI_MEAN, SYN_MRI_SD = 100.0, 15.0
 SYN_EEG_BIAS_PCT = {"SMA": -3.0, "F4": -6.0}
 SYN_REP_NOISE_PCT = 4.0
 SYN_DICE = {"SMA": 0.80, "F4": 0.70}
-
-N_BOOT = 4000
-
 
 def synthetic_rows(n=SYN_N_SUBJECTS, seed=0):
     """A long table shaped exactly like the real one will be."""
@@ -75,51 +80,6 @@ def synthetic_rows(n=SYN_N_SUBJECTS, seed=0):
     return rows
 
 
-# --- benjamini hochberg, by hand --------------------------------------------------
-def bh_fdr(pvals, q=0.05):
-    """Adjusted p values (q values) and the reject flags at level q.
-
-    sort the p values, the k-th smallest is compared to k/m * q. the adjusted
-    value is p * m / k, run from the largest down so it stays monotone
-    """
-
-    p = np.asarray(pvals, dtype=float)
-    m = len(p)
-    order = np.argsort(p)
-    ranked = p[order] * m / np.arange(1, m + 1)
-    adj = np.minimum.accumulate(ranked[::-1])[::-1]
-    adj = np.clip(adj, 0.0, 1.0)
-    out = np.empty(m)
-    out[order] = adj
-    return out, out <= q
-
-
-def bootstrap_ci(values, n_boot=N_BOOT, alpha=0.05, seed=0):
-    """Percentile bootstrap ci on the mean, no normality assumed."""
-
-    rng = np.random.default_rng(seed)
-    v = np.asarray(values, dtype=float)
-    means = rng.choice(v, size=(n_boot, len(v)), replace=True).mean(axis=1)
-    return float(np.percentile(means, 100 * alpha / 2)), float(np.percentile(means, 100 * (1 - alpha / 2)))
-
-
-def mixed_model(rows):
-    """pct diff ~ site with a random intercept per participant, if statsmodels is there."""
-
-    try:
-        import pandas as pd
-        import statsmodels.formula.api as smf
-    except ImportError:
-        return None, ("statsmodels not installed. it would fit\n"
-                      "      MixedLM('value ~ C(site)', groups='subject') on the pct_diff_mean_roi rows,\n"
-                      "      both reps per subject and site, fixed effect of site, random intercept per participant.\n"
-                      "      install with: python -m pip install statsmodels pandas")
-    df = pd.DataFrame([r for r in rows if r["metric"] == "pct_diff_mean_roi" and r["method"] == "EEG-MRI"])
-    md = smf.mixedlm("value ~ C(site)", df, groups=df["subject"])
-    fit = md.fit()
-    return fit, str(fit.summary())
-
-
 # --- the report ---------------------------------------------------------------------
 def report(rows, margin=PCT_MARGIN):
     sites = sorted({r["site"] for r in rows})
@@ -131,14 +91,14 @@ def report(rows, margin=PCT_MARGIN):
     pct = subject_means(rows, "pct_diff_mean_roi")
     for site in sites:
         v = np.array(list(pct[site].values()))
-        tost = subject_tost(v, margin=margin)
-        tt = subject_test(v, mu0=0.0)
+        tost = equivalence(v, margin)
+        tt = bias_test(v)
         lo, hi = tost["ci90"]
-        blo, bhi = bootstrap_ci(v)
+        clo, chi = describe(v)["ci95"]
         print(f"  {site:4s} n={len(v)}  mean {v.mean():+.2f} %  sd {v.std(ddof=1):.2f}")
         print(f"       tost      90% ci [{lo:+.2f}, {hi:+.2f}]  ->  {'EQUIVALENT' if tost['equivalent'] else 'not shown equivalent'}  (p {tost['p']:.4f})")
-        print(f"       paired t  t {tt['t']:+.2f}  p {tt['p']:.4f}  95% ci [{tt['ci'][0]:+.2f}, {tt['ci'][1]:+.2f}]")
-        print(f"       bootstrap 95% ci [{blo:+.2f}, {bhi:+.2f}]  ({N_BOOT} resamples, non normal sensitivity)")
+        print(f"       paired t  t {tt['t']:+.2f}  p {tt['p']:.4f}  95% ci [{clo:+.2f}, {chi:+.2f}]")
+        print(f"       sign test p {tt['p_sign']:.4f}  (counts differences above and below 0, no normality assumed)")
 
     print("\n--- agreement: bland altman on mean roi |E|, eeg minus mri, V/m")
     eeg, mri = subject_means(rows, "mean_E_magn", "EEG"), subject_means(rows, "mean_E_magn", "MRI")
@@ -161,17 +121,27 @@ def report(rows, margin=PCT_MARGIN):
                 continue
             v = np.array(list(by_site[site].values()))
             mu0 = 1.0 if m.startswith("dice") else 0.0
-            tt = subject_test(v, mu0=mu0)
+            tt = bias_test(v - mu0)
             tests.append((m, site, v.mean(), mu0, tt["p"]))
-    qvals, reject = bh_fdr([t[4] for t in tests])
+    qvals, reject = fdr([t[4] for t in tests])
     print(f"  {'metric':18s} {'site':4s} {'mean':>8s} {'vs':>4s} {'p':>8s} {'q':>8s}")
     for (m, site, mean, mu0, p), q, rj in zip(tests, qvals, reject):
         print(f"  {m:18s} {site:4s} {mean:+8.3f} {mu0:4.0f} {p:8.4f} {q:8.4f}  {'*' if rj else ''}")
     print(f"  ({sum(reject)} of {len(tests)} survive fdr at q=0.05)")
 
     print("\n--- mixed effects: pct diff ~ site, random intercept per participant")
-    fit, text = mixed_model(rows)
-    print("  " + text if fit is None else text)
+    df = pd.DataFrame([r for r in rows if r["metric"] == "pct_diff_mean_roi" and r["method"] == "EEG-MRI"])
+    mm = site_mixed_model(df, "value")
+    if "note" in mm:
+        print(f"  {mm['note']}")
+    else:
+        for site, v in mm["sites"].items():
+            print(f"  {site:4s} {v['mean']:+.2f} %  95% ci [{v['ci95'][0]:+.2f}, {v['ci95'][1]:+.2f}]")
+        print(f"  site effect: wald chi2 {mm['wald_chi2']:.2f} on {mm['df']} df, p {mm['p']:.4f}")
+        print(f"  subject sd {mm['subject_sd']:.2f}, residual sd {mm['residual_sd']:.2f},"
+              f" {mm['n_rows']} rows from {mm['n_subjects']} subjects")
+        for w in mm["warnings"]:
+            print(f"  fit warning: {w}")
 
     print("\n--- the same numbers through efield.metrics.site_stats, what run_efield.py prints")
     from efield.metrics import format_site_stats

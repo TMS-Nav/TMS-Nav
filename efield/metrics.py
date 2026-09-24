@@ -25,7 +25,7 @@ from pathlib import Path
 
 import numpy as np
 
-from src.stats import bland_altman, subject_test, subject_tost
+from src.stats import bias_test, bland_altman, equivalence
 
 # the equivalence margin on the primary endpoint, percent. a PLACEHOLDER to be
 # prespecified in the analysis plan before any data is looked at
@@ -155,7 +155,8 @@ def site_stats(rows, margin=PCT_MARGIN):
 
     the paired difference is already in the rows as pct_diff_mean_roi, one per
     rep, averaged to one per subject first so n is subjects, see src/stats.
-    bland altman is on the raw mean |E| so its units are V/m
+    bland altman is on the raw mean |E| so its units are V/m. all three are the
+    statsmodels helpers in src/stats.py, the same ones aim 1 uses
     """
 
     out = {}
@@ -166,8 +167,8 @@ def site_stats(rows, margin=PCT_MARGIN):
         values = np.array(list(subs.values()))
         block = {"n": int(len(values)), "mean_pct": float(values.mean())}
         if len(values) >= 2:
-            block["tost"] = subject_tost(values, margin=margin)
-            block["t"] = subject_test(values, mu0=0.0)
+            block["tost"] = equivalence(values, margin)
+            block["t"] = bias_test(values)
             common = sorted(set(eeg.get(site, {})) & set(mri.get(site, {})))
             if len(common) >= 2:
                 block["bland_altman_Vm"] = bland_altman([eeg[site][s] - mri[site][s] for s in common])
