@@ -1,0 +1,16 @@
+# the r01's own fmri targets, one row per subject per site.
+#
+# copy this file to saves/fmri_targets.csv and fill it in. run_efield.py reads it
+# and draws each region of interest at the target, which is what makes the numbers
+# mean "field delivered to the intended target". without it the roi falls back to a
+# guess under the coil and every line of the output says so.
+#
+# space is either
+#   subject   the coordinate is in the subject's own t1, in mm, the same space the
+#             brainsight export and the head model use. this is the usual one
+#   mni       a template coordinate, mapped into the subject by simnibs
+#
+# site is one of SMA, F4, C3, C4, Cz. note is free text and may be left empty.
+subject,site,x,y,z,space,note
+T1,SMA,-4.2,-2.1,62.0,subject,example only, replace with the real target
+T1,F4,38.5,34.0,32.4,subject,example only, replace with the real target
