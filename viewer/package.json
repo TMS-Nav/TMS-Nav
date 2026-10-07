@@ -1,0 +1,20 @@
+{
+  "name": "tms-nav-viewer",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "parcel src/index.html -p 1234 --dist-dir .dev-dist",
+    "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true, maxRetries: 5 })\"",
+    "build": "npm run clean && parcel build src/index.html --public-url ./ --no-source-maps",
+    "check-public": "node scripts/check-public.mjs",
+    "predeploy": "npm run check-public && npm run build",
+    "deploy": "gh-pages -d dist --nojekyll --no-history -m \"rebuild the viewer site\""
+  },
+  "dependencies": {
+    "three": "^0.182.0"
+  },
+  "devDependencies": {
+    "gh-pages": "^6.3.0",
+    "parcel": "^2.16.3"
+  }
+}

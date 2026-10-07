@@ -1,0 +1,872 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #15171c;
+  color: #e8e8e8;
+  font-family: system-ui, sans-serif;
+}
+
+/* small flat button, matches the zoom bar */
+#mc-resample {
+  background: #2a2d35;
+  color: #e8e8e8;
+  border: 1px solid #3a3d46;
+  border-radius: 4px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  margin-right: 8px;
+}
+
+#mc-resample:hover {
+  background: #3a3d46;
+}
+
+#mc-draw {
+  margin-top: 0;
+  vertical-align: middle;
+}
+
+/* the page is three columns, controls, the head, metrics. the panels run the full
+   height and each hides sideways off its own edge, so a small frame can give the
+   whole width to the head. hiding pulls the panel out by its own width with a
+   negative margin, the stage column takes the space and main.js resizes the canvas */
+#app {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+}
+
+.panel {
+  position: relative;
+  z-index: 2;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: #1c1e24;
+  transition: margin 0.22s cubic-bezier(0.2, 0, 0, 1), visibility 0s linear 0s;
+  /* thin dark scrollbars, the default white bar on the dark panel was loud */
+  scrollbar-width: thin;
+  scrollbar-color: #3a3d46 transparent;
+}
+
+.panel::-webkit-scrollbar {
+  width: 8px;
+}
+
+.panel::-webkit-scrollbar-thumb {
+  background: #3a3d46;
+  border-radius: 4px;
+}
+
+.panel::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+#ui {
+  width: 236px;
+  padding: 18px 16px 16px;
+  border-right: 1px solid #2f323a;
+}
+
+#dist {
+  width: 352px;
+  padding: 18px 16px 14px;
+  border-left: 1px solid #2f323a;
+}
+
+#app.ui-hidden #ui {
+  margin-left: -236px;
+}
+
+#app.dist-hidden #dist {
+  margin-right: -352px;
+}
+
+/* out of the way for the keyboard too, once the slide has finished */
+#app.ui-hidden #ui,
+#app.dist-hidden #dist {
+  visibility: hidden;
+  transition: margin 0.22s cubic-bezier(0.2, 0, 0, 1), visibility 0s linear 0.22s;
+}
+
+#stage {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  /* three.js puts a z-index on every target label, this keeps them under the panels */
+  isolation: isolate;
+}
+
+#c {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* the tab that hides a panel, on the panel's inner edge, half way down. the chevron
+   points the way the panel will move */
+.edge-tab {
+  position: absolute;
+  top: 50%;
+  z-index: 3;
+  width: 18px;
+  height: 56px;
+  margin-top: -28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: #1c1e24;
+  border: 1px solid #2f323a;
+  color: #8f95a0;
+  cursor: pointer;
+}
+
+.edge-left {
+  left: 0;
+  border-left: none;
+  border-radius: 0 6px 6px 0;
+}
+
+.edge-right {
+  right: 0;
+  border-right: none;
+  border-radius: 6px 0 0 6px;
+}
+
+.edge-tab:hover {
+  background: #262932;
+  color: #e8eaed;
+}
+
+/* a css triangle, drawn pointing left, then turned for the other cases */
+.edge-chev {
+  width: 0;
+  height: 0;
+  border-right: 5px solid currentColor;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  transition: transform 0.22s ease;
+}
+
+.edge-right .edge-chev,
+#app.ui-hidden .edge-left .edge-chev {
+  transform: rotate(180deg);
+}
+
+#app.dist-hidden .edge-right .edge-chev {
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel,
+  #app.ui-hidden #ui,
+  #app.dist-hidden #dist,
+  .edge-chev {
+    transition: none;
+  }
+}
+
+#dist h2 {
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 1.15;
+  margin-bottom: 12px;
+}
+
+/* three columns, shared by the column head and every row, so the numbers line up */
+.col-head,
+.site-head {
+  display: grid;
+  grid-template-columns: 1fr 62px 62px;
+  align-items: center;
+  gap: 6px;
+}
+
+.col-head {
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  color: #8f95a0;
+  padding: 0 6px 5px;
+  border-bottom: 1px solid #3a3d46;
+}
+
+.col-head .c-num,
+.site-head .c-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* one target. the head is the always visible summary, the body opens under it */
+.site {
+  border-bottom: 1px solid #2a2d35;
+}
+
+.site-head {
+  width: 100%;
+  background: none;
+  border: none;
+  color: #e8e8e8;
+  font-family: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  padding: 7px 6px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.site-head:hover {
+  background: #262932;
+}
+
+.site.open > .site-head {
+  background: #262932;
+}
+
+.site-head .c-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 600;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.site-body {
+  padding: 2px 6px 10px;
+}
+
+/* the little triangle on anything that opens */
+.chev {
+  display: inline-block;
+  width: 0;
+  height: 0;
+  border-left: 4.5px solid #8f95a0;
+  border-top: 3.5px solid transparent;
+  border-bottom: 3.5px solid transparent;
+  transition: transform 0.12s ease;
+  flex: none;
+}
+
+.site.open > .site-head .chev,
+.disclose[aria-expanded="true"] .chev {
+  transform: rotate(90deg);
+}
+
+/* a plain text disclosure header, used by the settings note and the group block */
+.disclose {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  background: none;
+  border: none;
+  color: #9aa0aa;
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  padding: 7px 6px;
+  margin-top: 4px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.disclose:hover {
+  color: #e8eaed;
+  background: #262932;
+}
+
+.disclose.section {
+  border-top: 1px solid #3a3d46;
+  margin-top: 8px;
+  font-size: 13px;
+  color: #c3c7cf;
+}
+
+/* the one line of grey under a chart or a block */
+.cap {
+  font-size: 10.5px;
+  color: #8f95a0;
+  padding: 2px 2px 0;
+}
+
+/* the under the line / not shown chip on a results row */
+.pill {
+  justify-self: end;
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 9px;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.pill.ok {
+  background: rgba(44, 160, 44, 0.18);
+  color: #7ec97e;
+}
+
+.pill.no {
+  background: rgba(214, 39, 40, 0.18);
+  color: #e58386;
+}
+
+#dist .seg {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+#dist .seg button {
+  flex: 1;
+  background: #2a2d35;
+  color: #9aa0aa;
+  border: 1px solid #3a3d46;
+  border-radius: 4px;
+  padding: 6px 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+#dist .seg button.on {
+  background: #3a3d46;
+  color: #e8e8e8;
+}
+
+.dist-site {
+  margin-bottom: 10px;
+}
+
+.dist-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  margin-bottom: 3px;
+}
+
+.dist-label .muted {
+  color: #8f95a0;
+  font-size: 12px;
+}
+
+.dist-label .stats {
+  margin-left: auto;
+  color: #b8bdc7;
+  font-size: 13px;
+}
+
+.dist-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.dist-svg .axis {
+  stroke: #4a4e58;
+  stroke-width: 1;
+}
+
+.dist-svg .tick {
+  fill: #9aa0aa;
+  font-size: 10px;
+}
+
+.dist-svg .rug {
+  stroke: #e8e8e8;
+  stroke-width: 1;
+  opacity: 0.7;
+}
+
+.dist-svg .stat {
+  stroke: #e8e8e8;
+  stroke-width: 1;
+}
+
+.dist-svg .stat.dotted {
+  stroke-dasharray: 1 2;
+}
+
+#dist .hint {
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+/* bland altman rows under a histogram */
+.agree {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11.5px;
+  color: #b8bdc7;
+  margin: 8px 0 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.agree th {
+  font-weight: 500;
+  color: #8f95a0;
+  text-align: right;
+  padding: 1px 4px;
+}
+
+.agree td {
+  padding: 1px 4px;
+  text-align: right;
+  border-top: 1px solid #2a2d35;
+}
+
+.agree td:first-child,
+.agree th:first-child {
+  text-align: left;
+  color: #9aa0aa;
+}
+
+.agree tr.sub td {
+  color: #8f95a0;
+}
+
+/* the brainsight results block at the bottom of the panel */
+#group {
+  padding-top: 2px;
+}
+
+#group:empty {
+  display: none;
+}
+
+#group .site-head {
+  grid-template-columns: 1fr 66px 78px;
+}
+
+#ui h1 {
+  font-size: 20px;
+  font-weight: 650;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  padding-bottom: 12px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid #3a3d46;
+}
+
+/* keyboard focus has to show on the dark panels */
+button:focus-visible,
+select:focus-visible,
+input:focus-visible,
+a:focus-visible {
+  outline: 2px solid #6f9ed8;
+  outline-offset: 2px;
+}
+
+.subject {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 16px;
+}
+
+.subject label {
+  font-size: 14px;
+  color: #9aa0aa;
+}
+
+/* the subject picker is the main thing you reach for with several mris loaded,
+   so it gets to be the biggest control in the panel */
+#subject-select {
+  flex: 1;
+  font-size: 16px;
+  font-weight: 600;
+  font-family: inherit;
+  color: #e8eaed;
+  background: #24262e;
+  border: 1px solid #3a3d46;
+  border-radius: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+
+#subject-select:hover {
+  border-color: #5a5e6a;
+}
+
+#subject-select:focus {
+  outline: none;
+  border-color: #1f77b4;
+}
+
+fieldset {
+  border: 1px solid #3a3d46;
+  border-radius: 6px;
+  padding: 8px 10px 10px;
+  margin-bottom: 14px;
+}
+
+legend {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #9aa0aa;
+  padding: 0 4px;
+}
+
+#ui label {
+  display: block;
+  font-size: 13px;
+  line-height: 1.9;
+  cursor: pointer;
+}
+
+.row {
+  font-size: 13px;
+  margin-bottom: 14px;
+}
+
+.row > label {
+  display: block;
+  color: #9aa0aa;
+  font-size: 11px;
+  margin-bottom: 5px;
+}
+
+.row #variability-val {
+  color: #e8e8e8;
+}
+
+input[type="range"] {
+  width: 100%;
+  accent-color: #6f9ed8;
+}
+
+.swatch {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  margin-right: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+/* on a layer row the swatch trails the name, so the checkboxes still line up */
+#ui label .swatch {
+  margin: 0 0 0 4px;
+  vertical-align: -1px;
+}
+
+.sw-scalp {
+  background: #cccccc;
+}
+
+.sw-coil {
+  background: #1f77b4;
+}
+
+.sw-target {
+  background: #111111;
+  border-color: rgba(255, 255, 255, 0.55);
+}
+
+.sw-landmark {
+  background: #f2c14e;
+}
+
+/* the monte carlo layer is a cloud, three small dots in the target colours */
+.sw-mc {
+  position: relative;
+  width: 14px;
+  border: none;
+  border-radius: 0;
+}
+
+.sw-mc i {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+}
+
+.sw-mc i:nth-child(1) {
+  left: 0;
+  top: 5px;
+  background: #d62728;
+}
+
+.sw-mc i:nth-child(2) {
+  left: 5px;
+  top: 1px;
+  background: #ff7f0e;
+}
+
+.sw-mc i:nth-child(3) {
+  left: 9px;
+  top: 6px;
+  background: #9467bd;
+}
+
+.hint {
+  margin-top: 12px;
+  font-size: 11px;
+  color: #8f95a0;
+}
+
+/* where the sample heads come from, the licence asks for the credit */
+.credit {
+  margin-top: 10px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #8f95a0;
+}
+
+/* embed mode only, a way out to the full size page */
+.open-full {
+  position: absolute;
+  right: 28px;
+  bottom: 16px;
+  padding: 7px 12px;
+  font-size: 12px;
+  color: #c3c7cf;
+  text-decoration: none;
+  background: rgba(28, 30, 36, 0.92);
+  border: 1px solid #3a3d46;
+  border-radius: 8px;
+}
+
+.open-full:hover {
+  color: #e8eaed;
+  border-color: #5a5e6a;
+}
+
+/* no webgl, say so plainly instead of a black frame */
+#fatal {
+  position: fixed;
+  z-index: 10;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  font-size: 15px;
+  line-height: 1.6;
+  color: #c3c7cf;
+  background: #15171c;
+}
+
+#fatal[hidden] {
+  display: none;
+}
+
+/* the brainsight results, plain rows of numbers */
+.results-empty {
+  font-size: 12px;
+  line-height: 1.55;
+  color: #9aa0aa;
+  padding: 4px 6px 6px;
+}
+
+.results-empty code {
+  font-size: 11.5px;
+  color: #c3c7cf;
+}
+
+.stat-list {
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: #b8bdc7;
+  font-variant-numeric: tabular-nums;
+  margin: 2px 0 6px;
+}
+
+.stat-list .k {
+  color: #8f95a0;
+}
+
+#info {
+  position: absolute;
+  bottom: 62px;
+  right: 28px;
+  padding: 12px 16px;
+  background: rgba(28, 30, 36, 0.92);
+  border: 1px solid #3a3d46;
+  border-radius: 8px;
+  min-width: 190px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+#info h2 {
+  font-size: 15px;
+  margin-bottom: 2px;
+}
+
+#info .muted {
+  color: #9aa0aa;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+#info .num {
+  color: #9aa0aa;
+}
+
+.hidden {
+  display: none;
+}
+
+/* target name tags */
+.label {
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  text-shadow: 0 0 3px #000, 0 0 3px #000;
+  pointer-events: none;
+}
+
+/* the monte carlo panel greys out when the layer is off, the controls still work */
+#mc-panel.dim {
+  opacity: 0.4;
+}
+
+#mc-panel .hint {
+  margin-top: 6px;
+  line-height: 1.45;
+  /* the note is built with newlines, pre-line is what makes them break */
+  white-space: pre-line;
+}
+
+/* zoom bar, bottom middle of the stage, so it is clear of both side panels */
+#zoom {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(28, 30, 36, 0.92);
+  border: 1px solid #3a3d46;
+  border-radius: 8px;
+}
+
+#zoom button {
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1;
+  color: #9aa0aa;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 3px 4px;
+  border-radius: 4px;
+}
+
+#zoom button:hover {
+  color: #e8eaed;
+  background: #33363f;
+}
+
+/* the readout doubles as a reset, same as the zoom box in word */
+#zoom-val {
+  min-width: 46px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+#zoom-slider {
+  width: 116px;
+}
+
+/* phone sized frames. there is no room for a panel beside the head, so an open
+   panel lies over the stage instead, and main.js keeps only one open at a time */
+@media (max-width: 760px) {
+  #app {
+    position: relative;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  #stage {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .panel {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    z-index: 4;
+    max-width: calc(100vw - 40px);
+    transition: transform 0.22s cubic-bezier(0.2, 0, 0, 1), visibility 0s linear 0s;
+  }
+
+  #ui {
+    left: 0;
+  }
+
+  #dist {
+    right: 0;
+  }
+
+  #app.ui-hidden #ui {
+    margin-left: 0;
+    transform: translateX(-100%);
+  }
+
+  #app.dist-hidden #dist {
+    margin-right: 0;
+    transform: translateX(100%);
+  }
+
+  #app.ui-hidden #ui,
+  #app.dist-hidden #dist {
+    transition: transform 0.22s cubic-bezier(0.2, 0, 0, 1), visibility 0s linear 0.22s;
+  }
+
+  /* the tab rides on the panel's edge while it is open */
+  .edge-left {
+    left: min(236px, calc(100vw - 40px));
+  }
+
+  .edge-right {
+    right: min(352px, calc(100vw - 40px));
+  }
+
+  #app.ui-hidden .edge-left {
+    left: 0;
+  }
+
+  /* only one panel is open at a time here, so the other tab would only sit beside
+     this one and confuse. it comes back once the open panel is hidden */
+  #app:not(.dist-hidden) .edge-left,
+  #app:not(.ui-hidden) .edge-right {
+    display: none;
+  }
+
+  #app.dist-hidden .edge-right {
+    right: 0;
+  }
+
+  .edge-tab {
+    z-index: 5;
+  }
+
+  #zoom-slider {
+    width: 72px;
+  }
+
+  /* the zoom bar takes the bottom on a phone, so the way out goes up top */
+  .open-full {
+    top: 12px;
+    right: 12px;
+    bottom: auto;
+  }
+}

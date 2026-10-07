@@ -1,0 +1,11 @@
+{
+  "note": "subjects that may go on the public site. everything the pipeline writes to src/data ships with npm run deploy, so a scan only goes on this list once it is cleared for public release. patient scans never do.",
+  "subjects": {
+    "T1": "SimNIBS example head ernie, CC BY-NC 4.0 (Thielscher, Antunes and Saturnino 2015)",
+    "T2": "SimNIBS group dataset sub01, ODC-PDDL, OpenfMRI ds000171",
+    "T3": "SimNIBS group dataset sub09, ODC-PDDL, OpenfMRI ds000171",
+    "T4": "SimNIBS group dataset sub10, ODC-PDDL, OpenfMRI ds000171",
+    "T5": "SimNIBS group dataset sub12, ODC-PDDL, OpenfMRI ds000171",
+    "T6": "SimNIBS group dataset sub15, ODC-PDDL, OpenfMRI ds000171"
+  }
+}
