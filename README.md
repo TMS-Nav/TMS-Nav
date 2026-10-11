@@ -141,6 +141,26 @@ output: remove its generated dataset folder, then rerun to update the dropdown.
 stay local. Cohort discovery currently applies to `run_pipeline.py`; the separate
 statistics and electric-field drivers retain their documented input layouts.
 
+## Editing registration landmarks
+
+Select Nasion, Inion, LPA or RPA in the viewer's **edit landmarks** panel, or click
+its yellow marker. Enter X/Y/Z in millimeters and **Apply coordinates**. Entries
+are constrained to the displayed scalp by default; uncheck the constraint for an
+exact off-surface coordinate. **Snap to scalp** projects the current point.
+**Pick on scalp** places it at your next click on the head; Escape cancels.
+Rotate first to expose the desired side.
+
+Direction buttons take a step in the local tangent plane and project back onto
+the scalp triangles. The step is a tangent displacement, not a geodesic distance.
+**Reset selected** restores the pipeline position. Edits are kept per dataset in
+browser storage when available; **Export JSON** downloads them with frame metadata.
+They do not modify Python files or recompute Monte Carlo registration/statistics.
+Changed source landmark exports invalidate saved browser edits.
+
+Regenerate the MNI demo with `python run_pipeline.py --template` for explicit
+`MNI152NLin2009aSym` metadata. Patient scans remain subject RAS until registered.
+See the [MNI migration plan](docs/mni-migration.md) for the source audit and rollout.
+
 ## Aim 1 statistics
 
 Put Brainsight session exports in `saves/brainsight/` named
@@ -163,6 +183,14 @@ its own interpreter; it is not installed into this venv. `run_pipeline.py` does
 not run tissue segmentation or electric-field simulations.
 
 ## Tests
+
+The viewer's scalp projection and movement tests run with Node.js:
+
+```bash
+cd viewer
+node --test tests/landmarkGeometry.test.mjs
+cd ..
+```
 
 Use the same venv, from the repository root:
 
@@ -215,3 +243,46 @@ for references and full redistribution terms.
 Copyright (C) 1993–2004 Louis Collins, McConnell Brain Imaging Centre, Montreal
 Neurological Institute, McGill University. Redistribution requires retaining the
 copyright notice; the linked license includes the complete warranty statement.
+
+## EEG 10–20 scalp marking
+
+Run `python run_pipeline.py --template` (or supply a subject MRI), then rebuild
+the viewer with `npm run build` in `viewer/`. The **10–20 electrodes** and
+**10–20 dashed arcs** layer switches independently control the cyan scalp sites
+and tape constructions. Click a site to read its physical coordinates: MNI RAS mm
+on the template, native subject RAS mm on an unregistered patient scan.
+
+The pipeline measures connected plane/scalp intersections by arc length:
+Nz–Iz at 10/30/50/70/90% gives Fpz/Fz/Cz/Pz/Oz; LPA–Cz–RPA gives
+T3/C3/C4/T4 at 10/30/70/90%. The full Fpz–Oz circumference supplies
+Fp1/F7/T5/O1 or Fp2/F8/T6/O2 at 5/15/35/45% measured from Fpz
+along the respective side. Transverse midpoints on F7–Fz–F8 and
+T5–Pz–T6 provide initial F3/F4 and P3/P4 estimates. The final sites are
+the intersections of those transverse arcs with the longitudinal Fp1–C3–O1
+and Fp2–C4–O2 arcs, so each marker lies on both displayed guides.
+**SMA is halfway along Fz–Cz**, at 40% of
+Nz–Iz, rather than a fixed centimeter offset. SMA and Fpz/Oz are included
+with the 19 conventional scalp electrodes; A1/A2 recording references are
+not inferred from LPA/RPA. T3/T4/T5/T6 correspond to modern T7/T8/P7/P8 labels.
+
+The dashed guides also include **Fp1–C3–O1** and **Fp2–C4–O2** longitudinal
+scalp arcs. They share the dashed-arcs layer switch. Intersection reconciliation
+replaces the independent transverse midpoint rule for F3/F4/P3/P4;
+`eeg_qc.transverse_midpoint_shift_mm` reports each resulting displacement.
+The workbook calculator retains its separate Fz–F8 midpoint recipe.
+
+`markers.json` stores `electrodes`, `eeg_arcs` and `eeg_qc`. The viewer
+reports the sagittal-versus-coronal Cz gap; QC also records temporal-versus-ring
+midpoint gaps. Plane cuts approximate snug tape paths on the reconstructed scalp,
+and independent constructions can disagree on an irregular head. Landmark
+heuristics still need review, particularly on defaced scans. Old exports without
+EEG fields continue to load.
+
+The cyan EEG cap is separate from the existing approximate MRI target markers and
+Monte Carlo results. These five targets are fixed-direction scalp placeholders,
+not anatomically selected Brainsight targets; see the [target-definition audit](docs/target-definitions.md).
+Browser landmark edits hide the cap to avoid displaying it
+as current; the exported cap always uses the Python pipeline's landmarks. Browser
+edits do not yet feed back into Python or recompute the cap.
+
+Marking reference: [Seeck et al., IFCN standardized electrode array (2017)](https://doi.org/10.1016/j.clinph.2017.06.254).

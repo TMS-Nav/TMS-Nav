@@ -691,6 +691,7 @@ input[type="range"] {
 }
 
 #info {
+  pointer-events: none;
   position: absolute;
   bottom: 62px;
   right: 28px;
@@ -721,6 +722,34 @@ input[type="range"] {
 .hidden {
   display: none;
 }
+
+#landmark-editor .hint { margin: 4px 0 8px; line-height: 1.45; }
+#landmark-editor select, #landmark-editor input[type="number"] {
+  width: 100%;
+  min-width: 0;
+  color: #e8e8e8;
+  background: #24262e;
+  border: 1px solid #3a3d46;
+  border-radius: 4px;
+  padding: 5px 3px;
+  font: inherit;
+  font-size: 12px;
+}
+.landmark-coordinates { display: grid; gap: 4px; margin: 8px 0; }
+#ui .landmark-coordinates label { display: grid; grid-template-columns: 50px minmax(0, 1fr); align-items: center; }
+#landmark-editor button {
+  color: #e8e8e8;
+  background: #2a2d35;
+  border: 1px solid #3a3d46;
+  border-radius: 4px;
+  padding: 5px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+#landmark-editor button:hover, #landmark-editor button[aria-pressed="true"] { background: #45402b; border-color: #f2c14e; }
+.landmark-actions, .landmark-directions { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin: 8px 0; }
+#landmark-editor:disabled { opacity: 0.5; }
 
 /* target name tags */
 .label {

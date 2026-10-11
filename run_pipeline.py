@@ -6,6 +6,7 @@ import numpy as np
 import pyvista as pv
 
 from src.coil_model import place_coil
+from src.eeg_cap import eeg_cap
 from src.export_mc import export_monte_carlo
 from src.export_web import export_web, write_registry
 from src.head_surface import scalp_surface
@@ -46,6 +47,7 @@ def build_scene(mri_path, name=None):
     scalp = scalp_surface(volume, affine, smooth_sigma=2.0, mask=mask, wipe=info.wipe)
     targets = standard_targets(scalp)
     landmarks = standard_landmarks(scalp)
+    electrodes, eeg_arcs, eeg_qc = eeg_cap(scalp, landmarks)
     coil = place_coil(scalp, COIL_AIM, gap=GAP_MM)
 
     return Scene(
@@ -55,6 +57,7 @@ def build_scene(mri_path, name=None):
         coil=coil,
         landmarks=landmarks,
         qc=info.as_dict(),
+        electrodes=electrodes, eeg_arcs=eeg_arcs, eeg_qc=eeg_qc,
     )
 
 
@@ -77,6 +80,11 @@ def main(argv=None):
     for mri, name in inputs:
         print(f"\n=== {mri} ===")
         scene = build_scene(mri, name=name)
+        if args.template or (name == "MNI152" and "templates" in mri.parts):
+            scene.coordinate_frame = {
+                "name": "MNI152", "axes": "RAS", "units": "mm",
+                "template": "MNI152NLin2009aSym",
+            }
 
         scalp = scene.scalp
         lo = np.array(scalp.bounds[0::2])

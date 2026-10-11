@@ -48,26 +48,19 @@ def standard_targets(surf):
 
 
 def standard_landmarks(surf):
-    """The eeg registration landmarks, picked as extreme points on the scalp."""
+    """EEG registration landmarks inferred from scalp profiles in RAS mm."""
 
     p = surf.points
-    x, y, z = p[:, 0], p[:, 1], p[:, 2]
+    x, z = p[:, 0], p[:, 2]
     center = p.mean(axis=0)
-    zc = 0.5 * (z.min() + z.max())
-
-    # keep to eye/brow height so the front pick lands near the nose bridge, not
-    # the chin, and the ears land by the ear canal, not the jaw
-    face_band = np.abs(x) < 15
-    face_band &= (z > zc) & (z < zc + 45)
-    back_band = (np.abs(x) < 15) & (z > zc - 5)
-    ear_band = (y > -25) & (y < 35) & (z > zc - 3) & (z < zc + 35)
+    nasion = _nasion(p)
 
     picks = [
         ("Cz", "Cz", _pick(p, np.abs(x) < 20, z, "max")),        # vertex
-        ("nasion", "Nz", _nasion(p)),                            # dip between brow and nose
-        ("inion", "Iz", _pick(p, back_band, y, "min")),          # bump at the back
-        ("LPA", "LPA", _pick(p, ear_band, x, "min")),            # left ear
-        ("RPA", "RPA", _pick(p, ear_band, x, "max")),            # right ear
+        ("nasion", "Nz", nasion),                               # dip between brow and nose
+        ("inion", "Iz", _inion(p)),                             # posterior midline prominence
+        ("LPA", "LPA", _lpa(p, nasion=nasion)),                  # in front of the left pinna
+        ("RPA", "RPA", _rpa(p, nasion=nasion)),                  # in front of the right pinna
     ]
 
     out = []
@@ -122,6 +115,87 @@ def _nasion(points, half_width=4.0, tip_below_top=(55.0, 170.0), window=60.0,
             return p[idx[k_min]]
 
     return p[idx[k_tip]]
+
+
+def _inion(points, half_width=4.0, below_top=(70.0, 145.0)):
+    """Posterior-most scalp point in a narrow occipital midline strip.
+
+    The search is measured down from the vertex rather than up from the mesh
+    midpoint, so neck coverage does not push the pick toward the crown. The broad
+    occipital band includes the lower posterior prominence of the MNI head.
+    This is a surface heuristic, not detection of a bony feature in the MRI.
+    """
+    p = _landmark_points(points)
+    midline = 0.5 * (p[:, 0].min() + p[:, 0].max())
+    lateral = np.abs(p[:, 0] - midline)
+    mid = lateral < half_width
+    if not mid.any():
+        mid = lateral <= lateral.min() + 1e-6
+    depth = p[:, 2].max() - p[:, 2]
+    band = mid & (depth >= below_top[0]) & (depth <= below_top[1])
+    # A cropped/short surface may miss the band: stay on the midline, never jump
+    # to the back of an ear simply because it is the global posterior extreme.
+    return _pick(p, band if band.any() else mid, p[:, 1], "min")
+
+
+def _lpa(points, nasion=None, **kwargs):
+    """Left preauricular scalp prominence, anterior to the outer ear."""
+    return _preauricular(points, side=-1, nasion=nasion, **kwargs)
+
+
+def _rpa(points, nasion=None, **kwargs):
+    """Right preauricular scalp prominence, anterior to the outer ear."""
+    return _preauricular(points, side=1, nasion=nasion, **kwargs)
+
+
+def _preauricular(points, side, nasion=None, half_height=2.0,
+                 pinna_clearance=15.0, anterior_reach=60.0):
+    """Find each ear separately near nasion height, without selecting the pinna.
+
+    In a thin horizontal slice, the outer ear is the largest lateral prominence.
+    Look anterior to it for the smaller preauricular prominence. Clearance and
+    slice thickness scale with head width (180 mm nominal); no template XYZ
+    coordinates are used. The two sides are not forced to be mirror images.
+    Missing/cropped slices use the closest available heights on the same side.
+    """
+    p = _landmark_points(points)
+    if side not in (-1, 1):
+        raise ValueError("preauricular side must be -1 (left) or +1 (right)")
+    width = float(np.ptp(p[:, 0]))
+    if width <= 0:
+        raise ValueError("need a scalp with nonzero left/right extent")
+    midline = 0.5 * (p[:, 0].min() + p[:, 0].max())
+    scale = width / 180.0
+    reference = _nasion(p) if nasion is None else np.asarray(nasion, dtype=float)
+    height = float(reference[2])
+    lateral = side * (p[:, 0] - midline)
+    side_mask = lateral > 0.65 * width / 2
+    if not side_mask.any():
+        raise ValueError("no scalp points on the requested preauricular side")
+    height_error = np.abs(p[:, 2] - height)
+    band = side_mask & (height_error <= half_height * scale)
+    if not band.any():
+        nearest_height = height_error[side_mask].min()
+        band = side_mask & (height_error <= nearest_height + half_height * scale)
+    q = p[band]
+    pinna = q[np.argmax(side * (q[:, 0] - midline))]
+    anterior = ((q[:, 1] > pinna[1] + pinna_clearance * scale)
+                & (q[:, 1] <= pinna[1] + anterior_reach * scale))
+    if anterior.any():
+        candidates = q[anterior]
+        return candidates[np.argmax(side * (candidates[:, 0] - midline))]
+    # If the anterior patch is cropped, return the nearest available point to
+    # the expected anterior edge at nasion height, retaining correct laterality.
+    score = ((q[:, 1] - pinna[1] - pinna_clearance * scale) ** 2
+             + (q[:, 2] - height) ** 2)
+    return q[np.argmin(score)]
+
+
+def _landmark_points(points):
+    p = np.asarray(points, dtype=float)
+    if p.ndim != 2 or p.shape[1] != 3 or not len(p) or not np.isfinite(p).all():
+        raise ValueError("landmarks need a nonempty finite Nx3 scalp point array")
+    return p
 
 
 def _pick(points, mask, key, mode):
