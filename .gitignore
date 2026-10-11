@@ -1,10 +1,14 @@
-venv
+.venv/
+venv/
 __pycache__/
 *.pyc
 *.pyo
+pytest_cache/
+.temp/
 
 node_modules/
 parcel-cache/
+.parcel-cache
 dist/
 dev-dist/
 
