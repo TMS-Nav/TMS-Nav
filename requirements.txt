@@ -1,0 +1,7 @@
+numpy>=1.26
+scipy>=1.11
+nibabel>=5.2
+pyvista>=0.47
+matplotlib>=3.8
+statsmodels>=0.14
+nilearn>=0.12,<0.15

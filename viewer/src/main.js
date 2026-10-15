@@ -7,6 +7,7 @@ import { PLYLoader } from "three/examples/jsm/loaders/PLYLoader.js";
 import { CSS2DRenderer, CSS2DObject } from "three/examples/jsm/renderers/CSS2DRenderer.js";
 
 import { DATASETS, AIM1 } from "./datasetRegistry.js";
+import { createLandmarkEditor } from "./landmarkEditor.js";
 
 // the middle column between the two side panels. everything is sized off this box,
 // not the window, so hiding a panel recentres the head
@@ -71,7 +72,9 @@ const coilGroup = new THREE.Group();
 const targetGroup = new THREE.Group();
 const landmarkGroup = new THREE.Group();
 const mcGroup = new THREE.Group();
-scene.add(scalpGroup, coilGroup, targetGroup, landmarkGroup, mcGroup);
+const eegGroup = new THREE.Group();
+const arcGroup = new THREE.Group();
+scene.add(scalpGroup, coilGroup, targetGroup, landmarkGroup, mcGroup, eegGroup, arcGroup);
 
 // which layers are on. choices survive a reload via localStorage, and on start the
 // same state is pushed onto both the checkbox and the layer, so the two cannot
@@ -82,6 +85,8 @@ const LAYER_DEFAULTS = {
   "toggle-targets": true,
   "toggle-landmarks": true,
   "toggle-mc": true,
+  "toggle-eeg": true,
+  "toggle-arcs": true,
   "mc-samples": true,
   "mc-mean": true,
   "mc-ellipsoid": true,
@@ -134,6 +139,8 @@ function saveOpenState() {
 
 // the subject on screen, shown in the metrics column head
 let currentSubject = "";
+let currentCoordinateLabel = "Subject RAS";
+let eegStale = false;
 
 // aim 1 metrics panel. the monte carlo payload of the loaded subject, and which of
 // its four metrics is on show. two distances in mm, two angles in degrees
@@ -179,6 +186,21 @@ let targetRadius = 2.5; // mm
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 const plyLoader = new PLYLoader();
+const landmarkEditor = createLandmarkEditor({
+  onChange: (marker) => {
+    showInfo(marker);
+    eegStale = true; eegGroup.visible = false; arcGroup.visible = false;
+    for (const id of ["toggle-eeg", "toggle-arcs"]) document.getElementById(id).disabled = true;
+    document.getElementById("eeg-status").textContent = "Landmarks edited: EEG cap hidden. Reset edited landmarks and reload to restore the pipeline cap. Browser edits do not update Python.";
+  },
+  showLandmarks: () => {
+    landmarkGroup.visible = true;
+    layerState["toggle-landmarks"] = true;
+    document.getElementById("toggle-landmarks").checked = true;
+    saveLayerState(layerState);
+  },
+});
+let pointerStart = null;
 
 function aspect() {
   return Math.max(stage.clientWidth, 1) / Math.max(stage.clientHeight, 1);
@@ -223,10 +245,14 @@ async function loadDataset(key) {
   clearScene();
 
   currentSubject = ds.label || key;
+  const markers = structuredClone(ds.markers);
+  currentCoordinateLabel = markers.coordinate_frame?.template || "Subject RAS";
   addScalp(scalpGeo);
   addCoil(coilGeo);
-  addTargets(ds.markers.targets);
-  addLandmarks(ds.markers.landmarks, ds.markers.targets);
+  addTargets(markers.targets);
+  addLandmarks(markers.landmarks, markers.targets);
+  addEeg(markers);
+  landmarkEditor.load(key, markers, landmarkGroup.children, scalpGeo);
   if (monteCarlo) addMonteCarlo(monteCarlo);
   frameCamera(scalpGeo);
 
@@ -237,7 +263,7 @@ async function loadDataset(key) {
 // tear down the previous subject. the groups themselves stay so the layer toggles
 // keep working, only their contents go
 function clearScene() {
-  for (const g of [scalpGroup, coilGroup, targetGroup, landmarkGroup, mcGroup]) {
+  for (const g of [scalpGroup, coilGroup, targetGroup, landmarkGroup, mcGroup, eegGroup, arcGroup]) {
     for (const child of [...g.children]) {
       // css2d labels hang off the marker meshes, their dom nodes have to be pulled
       // out by hand or they pile up on every switch
@@ -293,6 +319,28 @@ function buildSubjectPicker() {
   });
 
   return keys[0];
+}
+
+function addEeg(markers) {
+  eegStale = false;
+  for (const id of ["toggle-eeg", "toggle-arcs"]) document.getElementById(id).disabled = false;
+  eegGroup.visible = layerState["toggle-eeg"];
+  arcGroup.visible = layerState["toggle-arcs"];
+  for (const marker of markers.electrodes || []) {
+    const mesh = new THREE.Mesh(unitSphere, new THREE.MeshStandardMaterial({color: marker.color}));
+    mesh.position.fromArray(marker.position); mesh.scale.setScalar(2.2);
+    mesh.userData.marker = marker; eegGroup.add(mesh); addLabel(mesh, marker.label);
+  }
+  for (const arc of markers.eeg_arcs || []) {
+    const points = arc.points.map((p) => new THREE.Vector3().fromArray(p));
+    const geo = new THREE.BufferGeometry().setFromPoints(points);
+    const line = new THREE.Line(geo, new THREE.LineDashedMaterial({color: 0x43d9df, dashSize: 3, gapSize: 2}));
+    line.computeLineDistances(); arcGroup.add(line);
+  }
+  const qc = markers.eeg_qc;
+  document.getElementById("eeg-status").textContent = qc
+    ? "Scalp tape arcs • SMA halfway Fz–Cz. Cz cross-check gap: " + qc.cz_coronal_gap_mm.toFixed(1) + " mm. Ring cross-check: " + Math.max(...qc.temporal_ring_gap_mm).toFixed(1) + " mm."
+    : "Run the pipeline to generate EEG electrodes for this subject.";
 }
 
 function addScalp(geo) {
@@ -366,6 +414,7 @@ function addLandmarks(landmarks, targets = []) {
     mesh.scale.setScalar(3.5);
     mesh.userData.marker = m;
     landmarkGroup.add(mesh);
+    addLabel(mesh, m.label);
   }
 }
 
@@ -993,17 +1042,22 @@ function syncZoomUi() {
 }
 
 function onClick(event) {
+  if (pointerStart && Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y) > 5) return;
   const box = renderer.domElement.getBoundingClientRect();
   pointer.x = ((event.clientX - box.left) / box.width) * 2 - 1;
   pointer.y = -((event.clientY - box.top) / box.height) * 2 + 1;
 
   raycaster.setFromCamera(pointer, camera);
+  if (landmarkEditor.place(raycaster, scalpGroup.children[0])) return;
   const hits = raycaster.intersectObjects(
-    [...targetGroup.children, ...landmarkGroup.children],
+    [...(targetGroup.visible ? targetGroup.children : []), ...(landmarkGroup.visible ? landmarkGroup.children : []), ...(eegGroup.visible ? eegGroup.children : [])],
     false
   );
 
-  if (hits.length) showInfo(hits[0].object.userData.marker);
+  if (hits.length) {
+    landmarkEditor.select(hits[0].object);
+    showInfo(hits[0].object.userData.marker);
+  }
   else hideInfo();
 }
 
@@ -1012,7 +1066,7 @@ function showInfo(m) {
   info.innerHTML =
     `<h2>${m.label}</h2>` +
     `<div class="muted">${m.name}</div>` +
-    `<div><span class="num">RAS</span> ${m.position.map((v) => v.toFixed(0)).join(", ")} mm</div>`;
+    `<div><span class="num">${currentCoordinateLabel}</span> ${m.position.map((v) => v.toFixed(1)).join(", ")} mm</div>`;
   info.classList.remove("hidden");
 }
 
@@ -1055,6 +1109,8 @@ function bindUI() {
   toggle("toggle-targets", targetGroup);
   toggle("toggle-landmarks", landmarkGroup);
   toggle("toggle-mc", mcGroup);
+  remember("toggle-eeg", (on) => { eegGroup.visible = on && !eegStale; });
+  remember("toggle-arcs", (on) => { arcGroup.visible = on && !eegStale; });
 
   document.getElementById("coil-opacity").addEventListener("input", (e) => {
     setCoilOpacity(e.target.value / 100);
@@ -1140,6 +1196,7 @@ function bindUI() {
 
   controls.addEventListener("change", () => syncZoomUi());
 
+  renderer.domElement.addEventListener("pointerdown", (event) => { pointerStart = { x: event.clientX, y: event.clientY }; });
   renderer.domElement.addEventListener("click", onClick);
   // the stage changes size when a panel slides in or out as well as with the window,
   // and a resize observer sees both, every frame of the slide

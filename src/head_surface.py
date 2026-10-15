@@ -58,9 +58,11 @@ def scalp_surface(volume, affine, smooth_sigma=1.0, smooth_iters=30, mask=None, 
     if wipe is not None:
         surf = flatten_cut(surf, wipe, affine)
 
-    # field is 1 inside 0 out so the contour normals point inward, which makes
-    # every distance come back with the wrong sign
-    surf = surf.flip_faces()
+    # Probe the actual winding: VTK versions and reflected affines can change
+    # contour orientation. Distances must be negative inside, positive outside.
+    d = _orientation_distances(surf)
+    if d[0] > 0 > d[1]:
+        surf = surf.flip_faces()
     check_outward(surf)
 
     return surf
@@ -111,16 +113,20 @@ def flatten_cut(surf, wipe, affine, reach_vox=3, n_iter=150):
 def check_outward(surf):
     """Sanity check on the normals, the distance math depends on it."""
 
+    d = _orientation_distances(surf)
+    if not (d[0] < 0 < d[1]):
+        raise ValueError(f"scalp normals not outward, probes gave {d[0]:.1f} and {d[1]:.1f}")
+
+
+def _orientation_distances(surf):
+
     # mesh isn't closed (neck runs off the fov) so vtk won't auto orient it.
     # just probe a point we know is inside and one we know is outside
     inside = cranial_seed(surf)
     outside = np.array([0.0, 0.0, surf.bounds[5] + 300.0])
 
     probe = pv.PolyData(np.vstack([inside, outside]))
-    d = probe.compute_implicit_distance(surf).point_data["implicit_distance"]
-
-    if not (d[0] < 0 < d[1]):
-        raise ValueError(f"scalp normals not outward, probes gave {d[0]:.1f} and {d[1]:.1f}")
+    return probe.compute_implicit_distance(surf).point_data["implicit_distance"]
 
 
 def voxel_to_ras(points, affine):

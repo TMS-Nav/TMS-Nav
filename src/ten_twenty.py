@@ -32,9 +32,8 @@ RING_RIGHT = [("Fp2", 0.10), ("F8", 0.30), ("T6", 0.70), ("O2", 0.90)]
 # fp1 -> c3 -> o1 and its mirror, f3/p3 land midway between their neighbours
 PARA_CHAINS = [("Fp1", "C3", "O1", "F3", "P3"), ("Fp2", "C4", "O2", "F4", "P4")]
 
-# sma is 15% of the nasion inion arc in front of cz, so 35% along the sagittal chain.
-# TODO read this out of the mantovani 2010 methods, the abstract does not state the rule
-SMA_FRACTION = 0.35
+# Study SMA is the scalp-arc midpoint of Fz (30%) and Cz (50%).
+SMA_FRACTION = 0.40
 
 # dense samples per arc before interpolating by length. 2001 puts the interpolation
 # error a few orders below the mm we care about

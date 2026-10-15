@@ -23,6 +23,9 @@
           <label><input type="checkbox" id="toggle-coil" autocomplete="off" checked /> coil <span class="swatch sw-coil" aria-hidden="true"></span></label>
           <label><input type="checkbox" id="toggle-targets" autocomplete="off" checked /> targets <span class="swatch sw-target" aria-hidden="true"></span></label>
           <label><input type="checkbox" id="toggle-landmarks" autocomplete="off" checked /> EEG landmarks <span class="swatch sw-landmark" aria-hidden="true"></span></label>
+          <label><input type="checkbox" id="toggle-eeg" autocomplete="off" checked /> 10–20 electrodes</label>
+          <label><input type="checkbox" id="toggle-arcs" autocomplete="off" checked /> 10–20 dashed arcs</label>
+          <div class="hint" id="eeg-status"></div>
           <label><input type="checkbox" id="toggle-mc" autocomplete="off" checked /> monte carlo <span class="swatch sw-mc" aria-hidden="true"><i></i><i></i><i></i></span></label>
         </fieldset>
 
@@ -58,6 +61,41 @@
             <span class="chev"></span>settings
           </button>
           <div class="hint" id="mc-note" hidden></div>
+        </fieldset>
+
+        <fieldset id="landmark-editor" disabled>
+          <legend>edit landmarks</legend>
+          <div class="hint" id="landmark-space"></div>
+          <label for="landmark-select">Landmark</label>
+          <select id="landmark-select" aria-label="Selected landmark"></select>
+          <form id="landmark-form">
+            <div class="landmark-coordinates">
+              <label>X (R+)<input id="landmark-x" type="number" step="any" required aria-label="Landmark X in millimeters" /></label>
+              <label>Y (A+)<input id="landmark-y" type="number" step="any" required aria-label="Landmark Y in millimeters" /></label>
+              <label>Z (S+)<input id="landmark-z" type="number" step="any" required aria-label="Landmark Z in millimeters" /></label>
+            </div>
+            <label><input id="landmark-snap" type="checkbox" checked /> constrain entries to scalp</label>
+            <button type="submit">Apply coordinates</button>
+          </form>
+          <div class="landmark-actions">
+            <button id="landmark-project" type="button">Snap to scalp</button>
+            <button id="landmark-pick" type="button" aria-pressed="false">Pick on scalp</button>
+          </div>
+          <label for="landmark-step">Surface step (mm)</label>
+          <input id="landmark-step" type="number" min="0.1" max="20" step="0.1" value="1" />
+          <div class="landmark-directions" aria-label="Move along scalp">
+            <button type="button" data-landmark-direction="[-1,0,0]">Left −X</button>
+            <button type="button" data-landmark-direction="[1,0,0]">Right +X</button>
+            <button type="button" data-landmark-direction="[0,-1,0]">Back −Y</button>
+            <button type="button" data-landmark-direction="[0,1,0]">Front +Y</button>
+            <button type="button" data-landmark-direction="[0,0,-1]">Down −Z</button>
+            <button type="button" data-landmark-direction="[0,0,1]">Up +Z</button>
+          </div>
+          <div class="landmark-actions">
+            <button id="landmark-reset" type="button">Reset selected</button>
+            <button id="landmark-export" type="button">Export JSON</button>
+          </div>
+          <p class="hint" id="landmark-status" role="status" aria-live="polite"></p>
         </fieldset>
 
         <div class="hint">drag to rotate, scroll to zoom, click a marker</div>

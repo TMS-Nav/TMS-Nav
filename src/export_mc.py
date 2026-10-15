@@ -193,6 +193,7 @@ def export_monte_carlo(scene, out_dir, **kw):
     out_dir.mkdir(parents=True, exist_ok=True)
 
     payload = monte_carlo_cloud(scene.landmarks, scene.targets, **kw)
+    payload["coordinate_frame"] = scene.coordinate_frame
     # compact, the browser fetches this file as is, whitespace would triple it
     with open(out_dir / "montecarlo.json", "w") as f:
         json.dump(payload, f, separators=(",", ":"))

@@ -1,6 +1,7 @@
 {
   "note": "subjects that may go on the public site. everything the pipeline writes to src/data ships with npm run deploy, so a scan only goes on this list once it is cleared for public release. patient scans never do.",
   "subjects": {
+    "MNI152": "ICBM152 nonlinear 2009a T1 atlas, via Nilearn. Copyright (C) 1993–2004 Louis Collins, McConnell Brain Imaging Centre, Montreal Neurological Institute, McGill University. https://www.mcgill.ca/bic/software/tools-data-analysis/anatomical-mri/atlases/icbm152-non-linear-2009",
     "T1": "SimNIBS example head ernie, CC BY-NC 4.0 (Thielscher, Antunes and Saturnino 2015)",
     "T2": "SimNIBS group dataset sub01, ODC-PDDL, OpenfMRI ds000171",
     "T3": "SimNIBS group dataset sub09, ODC-PDDL, OpenfMRI ds000171",

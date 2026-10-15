@@ -1,31 +1,29 @@
-# feed an mri or a folder of mris, build the head, drop the study targets and a
-# coil on it, save front and side previews for each into saves/previews. this is
-# the sanity check view, the real showcase will be three.js later off the scene
-import sys
+# Build scalp scenes, previews and Three.js assets from structural MRIs or MNI152.
+import argparse
 import zlib
-from pathlib import Path
 
 import numpy as np
 import pyvista as pv
 
 from src.coil_model import place_coil
+from src.eeg_cap import eeg_cap
 from src.export_mc import export_monte_carlo
 from src.export_web import export_web, write_registry
 from src.head_surface import scalp_surface
+from src.mri_inputs import ROOT, SAVE_DIR, dataset_name, find_mris, resolve_inputs
 from src.scene import Scene
 from src.skull_boundary import head_mask, load_mri_volume
 from src.stats import render_distance_hist
 from src.targets import standard_landmarks, standard_targets
 from src.viz import render_view
 
-SAVE_DIR = Path("saves")
 PREVIEW_DIR = SAVE_DIR / "previews"
 
 # three.js viewer reads its data from here, one folder per subject
-VIEWER_DATA_DIR = Path("viewer") / "src" / "data"
+VIEWER_DATA_DIR = ROOT / "viewer" / "src" / "data"
 
-# regenerated every run so the viewer dropdown matches whatever is in saves/
-REGISTRY_PATH = Path("viewer") / "src" / "datasetRegistry.js"
+# Regenerated from existing processed dataset folders on every run.
+REGISTRY_PATH = ROOT / "viewer" / "src" / "datasetRegistry.js"
 
 GAP_MM = 2.0
 
@@ -37,16 +35,7 @@ COIL_AIM = (0.55, 1.0, 0.35)
 VIEWS = ["front", "side"]
 
 
-def find_mris(path):
-    """One mri file, or every nifti in a folder."""
-
-    path = Path(path)
-    if path.is_dir():
-        return sorted(path.glob("*.nii")) + sorted(path.glob("*.nii.gz"))
-    return [path]
-
-
-def build_scene(mri_path):
+def build_scene(mri_path, name=None):
     """Mri in, finished head scene out."""
 
     volume, affine = load_mri_volume(mri_path)
@@ -58,33 +47,44 @@ def build_scene(mri_path):
     scalp = scalp_surface(volume, affine, smooth_sigma=2.0, mask=mask, wipe=info.wipe)
     targets = standard_targets(scalp)
     landmarks = standard_landmarks(scalp)
+    electrodes, eeg_arcs, eeg_qc = eeg_cap(scalp, landmarks)
     coil = place_coil(scalp, COIL_AIM, gap=GAP_MM)
 
     return Scene(
-        name=Path(mri_path).name.split(".")[0],
+        name=name or dataset_name(mri_path),
         scalp=scalp,
         targets=targets,
         coil=coil,
         landmarks=landmarks,
         qc=info.as_dict(),
+        electrodes=electrodes, eeg_arcs=eeg_arcs, eeg_qc=eeg_qc,
     )
 
 
-def main():
+def main(argv=None):
     pv.OFF_SCREEN = True
 
-    # default to the saves folder, or take a path off the command line
-    src = sys.argv[1] if len(sys.argv) > 1 else SAVE_DIR
-    mris = find_mris(src)
-    if not mris:
-        print(f"no mri found at {src}")
-        return
+    parser = argparse.ArgumentParser(description="Build scalp scenes and Monte Carlo viewer data from T1w NIfTI scans.")
+    parser.add_argument("paths", nargs="*", help="MRI files or folders (default: saves/; empty folders use MNI152)")
+    parser.add_argument("--template", action="store_true", help="Use only the cached/downloaded full-head MNI152 demo")
+    args = parser.parse_args(argv)
+    if args.template and args.paths:
+        parser.error("--template cannot be combined with MRI paths")
+    try:
+        inputs = resolve_inputs(args.paths, template=args.template)
+    except (FileNotFoundError, ValueError, RuntimeError) as exc:
+        parser.error(str(exc))
 
-    PREVIEW_DIR.mkdir(exist_ok=True)
+    PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
 
-    for mri in mris:
+    for mri, name in inputs:
         print(f"\n=== {mri} ===")
-        scene = build_scene(mri)
+        scene = build_scene(mri, name=name)
+        if args.template or (name == "MNI152" and "templates" in mri.parts):
+            scene.coordinate_frame = {
+                "name": "MNI152", "axes": "RAS", "units": "mm",
+                "template": "MNI152NLin2009aSym",
+            }
 
         scalp = scene.scalp
         lo = np.array(scalp.bounds[0::2])

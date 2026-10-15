@@ -12,3 +12,9 @@ class Scene:
     coil: object = None    # seated figure-8 coil mesh in RAS mm
     landmarks: list = field(default_factory=list)  # eeg registration points
     qc: dict = field(default_factory=dict)         # what the head mask found, see HeadMaskInfo
+    electrodes: list = field(default_factory=list)
+    eeg_arcs: list = field(default_factory=list)
+    eeg_qc: dict = field(default_factory=dict)
+    coordinate_frame: dict = field(default_factory=lambda: {
+        "name": "subject_RAS", "axes": "RAS", "units": "mm", "template": None,
+    })

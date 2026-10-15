@@ -23,7 +23,7 @@ if (!subjects.length) {
 const blocked = subjects.filter((s) => !(s in allowed));
 if (blocked.length) {
   console.error(`not deploying. these subjects are not on public-subjects.json: ${blocked.join(", ")}`);
-  console.error("move their scans out of saves/, rerun run_pipeline.py, and deploy again");
+  console.error("remove their generated folders from viewer/src/data, then regenerate the registry with run_pipeline.py --template before deploying");
   process.exit(1);
 }
 

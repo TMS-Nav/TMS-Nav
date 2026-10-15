@@ -40,8 +40,12 @@ def export_web(scene, out_dir):
     payload = {
         "subject": scene.name,
         "space": "RAS_mm",
+        "coordinate_frame": scene.coordinate_frame,
         "targets": [_marker_json(t) for t in scene.targets],
         "landmarks": [_marker_json(m) for m in scene.landmarks],
+        "electrodes": [_marker_json(m) for m in scene.electrodes],
+        "eeg_arcs": scene.eeg_arcs,
+        "eeg_qc": scene.eeg_qc,
         # threshold, defaced flag and so on, so the viewer can say what it is showing
         "qc": scene.qc,
     }
