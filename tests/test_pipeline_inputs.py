@@ -78,3 +78,11 @@ def test_scalp_normals_with_both_affine_handedness(reflect):
         affine[0, 3] = 20
     mesh = scalp_surface(mask.astype(float), affine, mask=mask)
     check_outward(mesh)
+
+
+def test_dedicated_subject_discovery_ignores_optional_masks(tmp_path, monkeypatch):
+    monkeypatch.setattr(mri_inputs, 'SAVE_DIR', tmp_path)
+    anatomical = touch(tmp_path, 'subjects/sub-001/T1w.nii.gz')
+    touch(tmp_path, 'subjects/sub-001/skull_mask.nii.gz')
+    touch(tmp_path, 'subjects/sub-001/T1w_in_MNI.nii.gz')
+    assert mri_inputs.find_mris(tmp_path) == [anatomical]

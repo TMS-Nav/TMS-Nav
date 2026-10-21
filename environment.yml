@@ -1,0 +1,10 @@
+name: tms312
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - nodejs=22
+  - alsa-lib  # Linux: Chromium browser verification; omit on other platforms
+  - pip:
+      - -r requirements-dev.txt

@@ -2,14 +2,26 @@
 // rerun run_pipeline.py to pick up new or renamed mris in saves/
 import S0_MARKERS from "./data/MNI152/markers.json";
 import S0_MC from "url:./data/MNI152/montecarlo.json";
+import S1_MARKERS from "./data/synthetic-demo/markers.json";
 
 export const DATASETS = {
   "MNI152": {
     label: "MNI152",
+    kind: "template",
     scalpURL: new URL("./data/MNI152/scalp.ply", import.meta.url),
+    skullURL: null,
     coilURL: new URL("./data/MNI152/coil.ply", import.meta.url),
     markers: S0_MARKERS,
     monteCarloURL: S0_MC,
+  },
+  "synthetic-demo": {
+    label: "synthetic-demo",
+    kind: "subject",
+    scalpURL: new URL("./data/synthetic-demo/scalp.ply", import.meta.url),
+    skullURL: new URL("./data/synthetic-demo/skull.ply", import.meta.url),
+    coilURL: null,
+    markers: S1_MARKERS,
+    monteCarloURL: null,
   },
 };
 

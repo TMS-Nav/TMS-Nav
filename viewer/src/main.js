@@ -7,6 +7,7 @@ import { PLYLoader } from "three/examples/jsm/loaders/PLYLoader.js";
 import { CSS2DRenderer, CSS2DObject } from "three/examples/jsm/renderers/CSS2DRenderer.js";
 
 import { DATASETS, AIM1 } from "./datasetRegistry.js";
+import { defaultDatasetKey, isTemplateDataset, loadDatasetAssets } from "./datasetAssets.mjs";
 import { createLandmarkEditor } from "./landmarkEditor.js";
 
 // the middle column between the two side panels. everything is sized off this box,
@@ -68,19 +69,23 @@ scene.add(fillLight);
 
 // each layer is its own group so the toggles just flip .visible
 const scalpGroup = new THREE.Group();
+const skullGroup = new THREE.Group();
+const fiducialGroup = new THREE.Group();
 const coilGroup = new THREE.Group();
 const targetGroup = new THREE.Group();
 const landmarkGroup = new THREE.Group();
 const mcGroup = new THREE.Group();
 const eegGroup = new THREE.Group();
 const arcGroup = new THREE.Group();
-scene.add(scalpGroup, coilGroup, targetGroup, landmarkGroup, mcGroup, eegGroup, arcGroup);
+scene.add(skullGroup, fiducialGroup, scalpGroup, coilGroup, targetGroup, landmarkGroup, mcGroup, eegGroup, arcGroup);
 
 // which layers are on. choices survive a reload via localStorage, and on start the
 // same state is pushed onto both the checkbox and the layer, so the two cannot
 // drift apart the way they did when the browser restored the boxes alone
 const LAYER_DEFAULTS = {
   "toggle-scalp": true,
+  "toggle-skull": true,
+  "toggle-fiducials": true,
   "toggle-coil": true,
   "toggle-targets": true,
   "toggle-landmarks": true,
@@ -141,6 +146,7 @@ function saveOpenState() {
 let currentSubject = "";
 let currentCoordinateLabel = "Subject RAS";
 let eegStale = false;
+let currentIsTemplate = true;
 
 // aim 1 metrics panel. the monte carlo payload of the loaded subject, and which of
 // its four metrics is on show. two distances in mm, two angles in degrees
@@ -181,6 +187,8 @@ const ZOOM_MAX = 250;
 
 // unit spheres, scaled per marker so the slider just changes scale
 const unitSphere = new THREE.SphereGeometry(1, 20, 14);
+const unitDiamond = new THREE.OctahedronGeometry(1);
+const unitBox = new THREE.BoxGeometry(1.6, 1.6, 1.6);
 let targetRadius = 2.5; // mm
 
 const raycaster = new THREE.Raycaster();
@@ -191,10 +199,15 @@ const landmarkEditor = createLandmarkEditor({
     showInfo(marker);
     eegStale = true; eegGroup.visible = false; arcGroup.visible = false;
     for (const id of ["toggle-eeg", "toggle-arcs"]) document.getElementById(id).disabled = true;
-    document.getElementById("eeg-status").textContent = "Landmarks edited: EEG cap hidden. Reset edited landmarks and reload to restore the pipeline cap. Browser edits do not update Python.";
+    document.getElementById("eeg-status").textContent = "Points edited: EEG cap hidden. Export corrections and rerun ingestion to recompute subject derivatives.";
   },
-  showLandmarks: () => {
+  showLandmarks: (marker) => {
     landmarkGroup.visible = true;
+    if (marker?.category === "fiducial") {
+      fiducialGroup.visible = true;
+      layerState["toggle-fiducials"] = true;
+      document.getElementById("toggle-fiducials").checked = true;
+    }
     layerState["toggle-landmarks"] = true;
     document.getElementById("toggle-landmarks").checked = true;
     saveLayerState(layerState);
@@ -229,41 +242,60 @@ async function loadDataset(key) {
   if (!ds) throw new Error(`unknown subject ${key}`);
 
   const token = ++loadToken;
+  document.getElementById("fatal").hidden = true;
 
   // the monte carlo json is fetched per subject rather than bundled, so the first
   // load of an embedded page only pulls the head that is on screen
-  const [scalpGeo, coilGeo, monteCarlo] = await Promise.all([
-    loadPLY(ds.scalpURL.href),
-    loadPLY(ds.coilURL.href),
-    fetch(ds.monteCarloURL).then((r) => {
-      if (!r.ok) throw new Error(`monte carlo ${r.status}`);
-      return r.json();
-    }),
-  ]);
-  if (token !== loadToken) return; // a newer switch already won
+  const template = isTemplateDataset(key, ds);
+  const { scalpGeo, skullGeo, coilGeo, monteCarlo } = await loadDatasetAssets(
+    ds, template, loadPLY, async (url) => {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`monte carlo ${response.status}`);
+      return response.json();
+    });
+  if (token !== loadToken) {
+    for (const geo of [scalpGeo, skullGeo, coilGeo]) geo?.dispose();
+    return;
+  }
 
   clearScene();
 
   currentSubject = ds.label || key;
+  currentIsTemplate = template;
+  distData = null;
+  mcGroup.visible = template && layerState["toggle-mc"];
+  for (const id of ["toggle-mc", "toggle-coil", "toggle-targets"]) {
+    document.getElementById(id).disabled = !template;
+  }
+  document.getElementById("mc-panel").hidden = !template;
+  document.getElementById("subject-qc").textContent = template ? "MNI template demo" :
+    [ds.skullURL ? "Skull: supplied segmentation; review required" : "Skull unavailable from T1 alone",
+     `MRI candidates: ${(ds.markers.fiducials || []).length}; review on MRI`,
+     "Landmarks require confirmation. Cyan spheres: estimated EEG. Click points for coordinates and confidence."].join(" · ");
   const markers = structuredClone(ds.markers);
   currentCoordinateLabel = markers.coordinate_frame?.template || "Subject RAS";
   addScalp(scalpGeo);
-  addCoil(coilGeo);
-  addTargets(markers.targets);
-  addLandmarks(markers.landmarks, markers.targets);
+  if (skullGeo) skullGroup.add(new THREE.Mesh(skullGeo, new THREE.MeshStandardMaterial({color: 0xe9d7b3, side: THREE.DoubleSide})));
+  document.getElementById("toggle-skull").disabled = !skullGeo;
+  if (coilGeo) addCoil(coilGeo);
+  if (template) addTargets(markers.targets || []);
+  addFiducials(markers.fiducials || []);
+  addLandmarks(markers.landmarks || [], template ? markers.targets : []);
   addEeg(markers);
-  landmarkEditor.load(key, markers, landmarkGroup.children, scalpGeo);
-  if (monteCarlo) addMonteCarlo(monteCarlo);
+  landmarkEditor.load(key, markers, [...landmarkGroup.children, ...fiducialGroup.children], scalpGeo);
+  if (template && monteCarlo) addMonteCarlo(monteCarlo);
+  else renderDistances();
   frameCamera(scalpGeo);
 
   hideInfo();
   restoreUiState();
+  stage.dataset.subject = key;
 }
 
 // tear down the previous subject. the groups themselves stay so the layer toggles
 // keep working, only their contents go
 function clearScene() {
-  for (const g of [scalpGroup, coilGroup, targetGroup, landmarkGroup, mcGroup, eegGroup, arcGroup]) {
+  for (const g of [skullGroup, fiducialGroup, scalpGroup, coilGroup, targetGroup, landmarkGroup, mcGroup, eegGroup, arcGroup]) {
     for (const child of [...g.children]) {
       // css2d labels hang off the marker meshes, their dom nodes have to be pulled
       // out by hand or they pile up on every switch
@@ -272,7 +304,7 @@ function clearScene() {
         child.remove(sub);
       }
       g.remove(child);
-      if (child.geometry && child.geometry !== unitSphere) child.geometry.dispose();
+      if (child.geometry && ![unitSphere, unitDiamond, unitBox].includes(child.geometry)) child.geometry.dispose();
       if (child.material) child.material.dispose();
     }
   }
@@ -315,10 +347,12 @@ function buildSubjectPicker() {
   }
 
   sel.addEventListener("change", (e) => {
-    loadDataset(e.target.value).catch((err) => console.error("failed to load subject", err));
+    loadDataset(e.target.value).catch((err) => fail(`Failed to load subject: ${err.message}`));
   });
 
-  return keys[0];
+  const initial = defaultDatasetKey(DATASETS);
+  sel.value = initial;
+  return initial;
 }
 
 function addEeg(markers) {
@@ -338,9 +372,20 @@ function addEeg(markers) {
     line.computeLineDistances(); arcGroup.add(line);
   }
   const qc = markers.eeg_qc;
-  document.getElementById("eeg-status").textContent = qc
+  document.getElementById("eeg-status").textContent = qc?.status === "underdetermined"
+    ? `EEG positions withheld: ${qc.reason}`
+    : qc?.cz_coronal_gap_mm != null
     ? "Scalp tape arcs • SMA halfway Fz–Cz. Cz cross-check gap: " + qc.cz_coronal_gap_mm.toFixed(1) + " mm. Ring cross-check: " + Math.max(...qc.temporal_ring_gap_mm).toFixed(1) + " mm."
     : "Run the pipeline to generate EEG electrodes for this subject.";
+}
+
+function addFiducials(markers) {
+  for (const marker of markers) {
+    const mesh = new THREE.Mesh(unitDiamond, new THREE.MeshStandardMaterial({color: 0xef75c6}));
+    mesh.position.fromArray(marker.position); mesh.scale.setScalar(3.5);
+    mesh.userData.marker = marker; fiducialGroup.add(mesh);
+    addLabel(mesh, marker.anatomical_label || marker.label);
+  }
 }
 
 function addScalp(geo) {
@@ -407,7 +452,7 @@ function addLandmarks(landmarks, targets = []) {
   for (const m of landmarks) {
     if (taken.has(m.label)) continue;
     const mesh = new THREE.Mesh(
-      unitSphere,
+      unitBox,
       new THREE.MeshStandardMaterial({ color: new THREE.Color(m.color), roughness: 0.6 })
     );
     mesh.position.fromArray(m.position);
@@ -528,7 +573,12 @@ function renderDistances() {
   const host = document.getElementById("dist-charts");
   if (!host) return;
   host.innerHTML = "";
-  if (!distData) return;
+  if (!distData) {
+    document.getElementById("subject-label").textContent = `${currentSubject}: subject anatomy`;
+    host.textContent = "Subject reconstruction: simulation samples are not displayed.";
+    renderGroup();
+    return;
+  }
 
   const m = METRICS[distMetric];
 
@@ -1050,7 +1100,7 @@ function onClick(event) {
   raycaster.setFromCamera(pointer, camera);
   if (landmarkEditor.place(raycaster, scalpGroup.children[0])) return;
   const hits = raycaster.intersectObjects(
-    [...(targetGroup.visible ? targetGroup.children : []), ...(landmarkGroup.visible ? landmarkGroup.children : []), ...(eegGroup.visible ? eegGroup.children : [])],
+    [...(fiducialGroup.visible ? fiducialGroup.children : []), ...(targetGroup.visible ? targetGroup.children : []), ...(landmarkGroup.visible ? landmarkGroup.children : []), ...(eegGroup.visible ? eegGroup.children : [])],
     false
   );
 
@@ -1063,10 +1113,15 @@ function onClick(event) {
 
 function showInfo(m) {
   const info = document.getElementById("info");
-  info.innerHTML =
-    `<h2>${m.label}</h2>` +
-    `<div class="muted">${m.name}</div>` +
-    `<div><span class="num">${currentCoordinateLabel}</span> ${m.position.map((v) => v.toFixed(1)).join(", ")} mm</div>`;
+  info.replaceChildren();
+  const title = document.createElement("h2"); title.textContent = m.label; info.appendChild(title);
+  for (const text of [m.name, `${currentCoordinateLabel}: ${m.position.map((v) => v.toFixed(2)).join(", ")} mm`,
+    m.status, m.confidence == null ? null : `Confidence score: ${m.confidence} (${m.confidence_type || "estimate"})`,
+    m.suggested_label ? `Suggested identity: ${m.suggested_label} — requires confirmation` : null,
+    m.mni_position ? `MNI (derived): ${m.mni_position.map((v) => v.toFixed(2)).join(", ")} mm` : null]) {
+    if (!text) continue;
+    const row = document.createElement("div"); row.textContent = text; info.appendChild(row);
+  }
   info.classList.remove("hidden");
 }
 
@@ -1105,10 +1160,12 @@ function bindUI() {
   const toggle = (id, group) => remember(id, (on) => (group.visible = on));
 
   toggle("toggle-scalp", scalpGroup);
+  toggle("toggle-skull", skullGroup);
+  toggle("toggle-fiducials", fiducialGroup);
   toggle("toggle-coil", coilGroup);
   toggle("toggle-targets", targetGroup);
   toggle("toggle-landmarks", landmarkGroup);
-  toggle("toggle-mc", mcGroup);
+  remember("toggle-mc", (on) => { mcGroup.visible = on && currentIsTemplate; });
   remember("toggle-eeg", (on) => { eegGroup.visible = on && !eegStale; });
   remember("toggle-arcs", (on) => { arcGroup.visible = on && !eegStale; });
 
@@ -1213,4 +1270,4 @@ function animate() {
 bindUI();
 loadDataset(buildSubjectPicker())
   .then(animate)
-  .catch((err) => console.error("failed to load dataset", err));
+  .catch((err) => fail(`Failed to load dataset: ${err.message}`));

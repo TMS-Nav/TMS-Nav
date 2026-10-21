@@ -19,10 +19,13 @@
 
         <fieldset>
           <legend>layers</legend>
+          <label><input type="checkbox" id="toggle-skull" checked /> skull (when available)</label>
+          <label><input type="checkbox" id="toggle-fiducials" checked /> MRI fiducials ◆ pink</label>
+          <div class="hint" id="subject-qc" role="status"></div>
           <label><input type="checkbox" id="toggle-scalp" autocomplete="off" checked /> scalp <span class="swatch sw-scalp" aria-hidden="true"></span></label>
           <label><input type="checkbox" id="toggle-coil" autocomplete="off" checked /> coil <span class="swatch sw-coil" aria-hidden="true"></span></label>
           <label><input type="checkbox" id="toggle-targets" autocomplete="off" checked /> targets <span class="swatch sw-target" aria-hidden="true"></span></label>
-          <label><input type="checkbox" id="toggle-landmarks" autocomplete="off" checked /> EEG landmarks <span class="swatch sw-landmark" aria-hidden="true"></span></label>
+          <label><input type="checkbox" id="toggle-landmarks" autocomplete="off" checked /> landmarks ■ yellow</label>
           <label><input type="checkbox" id="toggle-eeg" autocomplete="off" checked /> 10–20 electrodes</label>
           <label><input type="checkbox" id="toggle-arcs" autocomplete="off" checked /> 10–20 dashed arcs</label>
           <div class="hint" id="eeg-status"></div>
@@ -64,7 +67,7 @@
         </fieldset>
 
         <fieldset id="landmark-editor" disabled>
-          <legend>edit landmarks</legend>
+          <legend>edit landmarks / MRI fiducials</legend>
           <div class="hint" id="landmark-space"></div>
           <label for="landmark-select">Landmark</label>
           <select id="landmark-select" aria-label="Selected landmark"></select>

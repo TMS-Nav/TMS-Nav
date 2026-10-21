@@ -505,6 +505,7 @@ a:focus-visible {
 }
 
 fieldset {
+  min-width: 0;
   border: 1px solid #3a3d46;
   border-radius: 6px;
   padding: 8px 10px 10px;
@@ -616,6 +617,8 @@ input[type="range"] {
   margin-top: 12px;
   font-size: 11px;
   color: #8f95a0;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
 }
 
 /* where the sample heads come from, the licence asks for the credit */

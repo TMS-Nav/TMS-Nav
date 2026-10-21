@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SAVE_DIR = ROOT / "saves"
 TEMPLATE_DIR = SAVE_DIR / "templates"
 # These contain outputs or auxiliary inputs, never patient structural scans.
-RESERVED = {"templates", "previews", "brainsight", "aim1", "efield", "m2m"}
+RESERVED = {"templates", "previews", "brainsight", "aim1", "efield", "m2m", "derivatives"}
 
 
 def is_nifti(path):
@@ -26,6 +26,11 @@ def find_mris(path):
     scans = []
     for scan in path.rglob("*"):
         relative = scan.relative_to(path)
+        # Dedicated subject folders can also hold optional masks/registration QC.
+        # Only the declared T1w input belongs in automatic scan discovery there.
+        if (scan.is_relative_to(SAVE_DIR / "subjects")
+                and scan.name.lower() not in {"t1w.nii", "t1w.nii.gz"}):
+            continue
         if scan.is_file() and is_nifti(scan) and not any(
             part.lower() in RESERVED or part.lower().startswith("m2m_")
             or part.startswith(".") for part in relative.parts[:-1]
