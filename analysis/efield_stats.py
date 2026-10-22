@@ -1,8 +1,7 @@
-# the aim 2 statistics, on the long table run_efield.py writes, or on a synthetic
-# one when no real table exists yet so the wiring can be seen before there is data.
+# the aim 2 statistics, on the long table run_efield.py writes.
 #
-#   python analysis/efield_stats.py                 synthetic table
-#   python analysis/efield_stats.py saves/efield/efield_long.csv
+#   python analysis/efield_stats.py                 saves/efield/efield_long.csv
+#   python analysis/efield_stats.py <long table csv>
 #
 # what the proposal asks for and where it is done here, every test through the
 # statsmodels helpers in src/stats.py:
@@ -22,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pandas as pd  # noqa: E402
 
+from efield.config import SIM_ROOT  # noqa: E402
 from efield.metrics import PAIRED_METRICS, PCT_MARGIN, read_csv, site_stats, subject_means  # noqa: E402
 from src.stats import (  # noqa: E402
     bias_test,
@@ -31,54 +31,6 @@ from src.stats import (  # noqa: E402
     fdr,
     site_mixed_model,
 )
-
-SITES = ("SMA", "F4")
-REPS = (1, 2)
-
-# the synthetic effect sizes, so what the report shows is understood before it
-# is trusted. mean roi |E| under the mri pose is about 100 V/m at 1 A/us and
-# varies +/- 15 between heads. the eeg pose reads a little lower, more at F4
-# where the cap is further from the landmarks, with a few percent of placement
-# noise per rep on top
-SYN_N_SUBJECTS = 20
-SYN_MRI_MEAN, SYN_MRI_SD = 100.0, 15.0
-SYN_EEG_BIAS_PCT = {"SMA": -3.0, "F4": -6.0}
-SYN_REP_NOISE_PCT = 4.0
-SYN_DICE = {"SMA": 0.80, "F4": 0.70}
-
-def synthetic_rows(n=SYN_N_SUBJECTS, seed=0):
-    """A long table shaped exactly like the real one will be."""
-
-    rng = np.random.default_rng(seed)
-    rows = []
-
-    def add(subject, site, method, rep, metric, value):
-        rows.append({"subject": subject, "site": site, "method": method, "rep": rep,
-                     "metric": metric, "value": float(value)})
-
-    for i in range(n):
-        subj = f"S{i + 1:02d}"
-        for site in SITES:
-            mri_true = rng.normal(SYN_MRI_MEAN, SYN_MRI_SD)
-            for rep in REPS:
-                mri = mri_true * (1.0 + rng.normal(0.0, 0.01))
-                eeg = mri_true * (1.0 + (SYN_EEG_BIAS_PCT[site] + rng.normal(0.0, SYN_REP_NOISE_PCT)) / 100.0)
-                for method, v in (("MRI", mri), ("EEG", eeg)):
-                    add(subj, site, method, rep, "mean_E_magn", v)
-                    add(subj, site, method, rep, "peak_E_magn", v * 1.6)
-                    add(subj, site, method, rep, "max_abs_E_normal", v * 0.8)
-                add(subj, site, "EEG-MRI", rep, "pct_diff_mean_roi", 100.0 * (eeg - mri) / mri)
-                add(subj, site, "EEG-MRI", rep, "diff_peak", (eeg - mri) * 1.6)
-                add(subj, site, "EEG-MRI", rep, "diff_normal", (eeg - mri) * 0.8)
-                add(subj, site, "EEG-MRI", rep, "diff_at_centre", (eeg - mri) * 1.1)
-                d_rel = np.clip(rng.normal(SYN_DICE[site], 0.08), 0, 1)
-                add(subj, site, "EEG-MRI", rep, "dice_supra", d_rel)
-                # the fixed V/m cut does not move with the weaker pose, so it
-                # sees the strength drop as well as the shift and reads lower
-                add(subj, site, "EEG-MRI", rep, "dice_supra_abs",
-                    float(np.clip(d_rel - abs(SYN_EEG_BIAS_PCT[site]) / 100.0, 0, 1)))
-    return rows
-
 
 # --- the report ---------------------------------------------------------------------
 def report(rows, margin=PCT_MARGIN):
@@ -150,20 +102,20 @@ def report(rows, margin=PCT_MARGIN):
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
-    if argv and Path(argv[0]).exists():
-        rows = read_csv(argv[0])
-        print(f"long table {argv[0]}")
-    else:
-        default = Path("saves") / "efield" / "efield_long.csv"
-        if default.exists():
-            rows = read_csv(default)
-            print(f"long table {default}")
-        else:
-            rows = synthetic_rows()
-            print(f"no long table at {default}, SYNTHETIC data: {SYN_N_SUBJECTS} subjects, "
-                  f"eeg bias {SYN_EEG_BIAS_PCT} %, rep noise {SYN_REP_NOISE_PCT} % sd")
+    path = Path(argv[0]) if argv else SIM_ROOT / "efield_long.csv"
+    if not path.exists():
+        print(f"no long table at {path}. run_efield.py --run writes it once there are results")
+        return 1
+    rows = read_csv(path)
+    print(f"long table {path}")
+    # every test is on subjects, one value each, and none of them work on one
+    subjects = {r["subject"] for r in rows}
+    if len(subjects) < 2:
+        print(f"{len(subjects)} subject in the table, the statistics need at least 2")
+        return 1
     report(rows)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

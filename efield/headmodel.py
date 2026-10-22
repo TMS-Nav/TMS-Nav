@@ -65,7 +65,7 @@ def inspect_m2m(path):
 def find_m2m(subject, roots=None):
     """The m2m folder for a subject, searching the project root then the samples.
 
-    subject can be a plain id (T1, ernie, sub01) or a path to an m2m folder.
+    subject can be a plain id (sub-001, ernie) or a path to an m2m folder.
     returns an M2M or None when nothing is found
     """
 

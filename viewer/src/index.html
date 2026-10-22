@@ -17,6 +17,7 @@
           <select id="subject-select"></select>
         </div>
 
+        <div id="aim1-controls" class="aim-pane" role="tabpanel" aria-labelledby="tab-aim1">
         <fieldset>
           <legend>layers</legend>
           <label><input type="checkbox" id="toggle-skull" checked /> skull (when available)</label>
@@ -102,9 +103,52 @@
         </fieldset>
 
         <div class="hint">drag to rotate, scroll to zoom, click a marker</div>
+        </div>
+
+        <div id="aim2-controls" class="aim-pane" role="tabpanel" aria-labelledby="tab-aim2" hidden>
+          <p class="a2-empty-left" id="a2-empty-left" hidden></p>
+          <div id="a2-controls">
+            <fieldset>
+              <legend>coil</legend>
+              <div class="seg" id="a2-sites" role="group" aria-label="Stimulation site"></div>
+              <div class="seg" id="a2-methods" role="group" aria-label="How the coil was placed"></div>
+            </fieldset>
+
+            <fieldset id="a2-slice-set">
+              <legend>slice</legend>
+              <div class="seg" id="a2-axis" role="group" aria-label="Slice direction">
+                <button type="button" data-axis="sagittal" title="Cut left to right, seen from the side">sagittal</button>
+                <button type="button" data-axis="axial" title="Cut across the head, seen from above">axial</button>
+                <button type="button" data-axis="coronal" title="Cut front to back, seen from the front">coronal</button>
+              </div>
+              <div class="row">
+                <label for="a2-pos">position <span id="a2-pos-val" class="val"></span></label>
+                <input type="range" id="a2-pos" min="-100" max="100" step="1" value="0" />
+              </div>
+              <div class="pair-btns">
+                <button type="button" id="a2-recentre" class="small-btn" title="Move the slice back through the target region">To target</button>
+                <button type="button" id="a2-flip" class="small-btn" aria-pressed="false" title="Keep the other half of the brain">Flip side</button>
+              </div>
+            </fieldset>
+
+            <fieldset>
+              <legend>layers</legend>
+              <label><input type="checkbox" id="a2-layer-cortex" autocomplete="off" checked /> cortex</label>
+              <label><input type="checkbox" id="a2-layer-slice" autocomplete="off" checked /> MRI slice</label>
+              <label><input type="checkbox" id="a2-layer-roi" autocomplete="off" checked /> target region</label>
+              <label><input type="checkbox" id="a2-layer-scalp" autocomplete="off" checked /> scalp</label>
+              <label><input type="checkbox" id="a2-layer-coil" autocomplete="off" checked /> coil <span class="swatch sw-coil" aria-hidden="true"></span></label>
+              <div class="row nested">
+                <label for="a2-coil-opacity">coil opacity</label>
+                <input type="range" id="a2-coil-opacity" min="0" max="100" value="35" />
+              </div>
+            </fieldset>
+          </div>
+        </div>
+
         <div class="credit">
-          Sample heads are the SimNIBS example data: ernie (T1, CC BY-NC 4.0) and the
-          group dataset (T2 to T6, ODC-PDDL, OpenfMRI ds000171).
+          Sample heads are the SimNIBS example data: Ernie (CC BY-NC 4.0) and the
+          group dataset (T1 to T5, ODC-PDDL, OpenfMRI ds000171), plus the MNI152 atlas.
         </div>
       </aside>
 
@@ -130,6 +174,14 @@
           <div id="mri-point-actions"><button id="mri-place">Place selected point at crosshair</button><button id="mri-add">Add fiducial at crosshair</button></div>
         </section>
 
+        <div id="aim-tabs" role="tablist" aria-label="Study aim" data-aim="1">
+          <button type="button" role="tab" id="tab-aim1" data-aim="1" aria-selected="true" aria-controls="aim1-controls aim1-metrics">Aim 1</button>
+          <button type="button" role="tab" id="tab-aim2" data-aim="2" aria-selected="false" aria-controls="aim2-controls aim2-metrics" tabindex="-1">Aim 2</button>
+          <span class="tab-ink" aria-hidden="true"></span>
+        </div>
+
+        <p id="a2-stage-empty" class="stage-note" hidden>No e-field has been simulated for this head.</p>
+
         <button type="button" class="edge-tab edge-left" data-panel="ui" aria-controls="ui" aria-expanded="true" aria-label="Hide controls">
           <span class="edge-chev" aria-hidden="true"></span>
         </button>
@@ -150,6 +202,7 @@
       </main>
 
       <aside id="dist" class="panel" aria-label="aim 1 metrics">
+        <div id="aim1-metrics" class="aim-pane" role="tabpanel" aria-labelledby="tab-aim1">
         <section id="review-panel" hidden>
           <h2>Cap marker review</h2><p id="review-count" role="status"></p>
           <p class="hint">Inspect every center in all three MRI planes. Selecting a row moves the slice crosshair.</p>
@@ -190,6 +243,41 @@
           <span class="chev" aria-hidden="true"></span><span id="group-title">Brainsight results</span>
         </button>
         <div id="group" hidden></div></div>
+        </div>
+
+        <div id="aim2-metrics" class="aim-pane" role="tabpanel" aria-labelledby="tab-aim2" hidden>
+          <h2>Aim 2 E-field</h2>
+          <div id="a2-empty" class="a2-empty" hidden>
+            <p>No e-field for <span id="a2-empty-subject"></span> yet. Simulate it, then write the viewer files:</p>
+            <pre><code>py -m efield.export_web saves/efield/&lt;subject&gt; &lt;viewer subject&gt;</code></pre>
+          </div>
+          <div id="a2-body">
+            <div id="a2-roi" class="a2-roi"></div>
+
+            <figure id="a2-slice-fig" class="a2-slice">
+              <div class="a2-frame">
+                <canvas id="a2-slice-canvas" role="img"></canvas>
+                <span class="a2-where" id="a2-where"></span>
+                <span class="a2-o a2-o-l" id="a2-o-l"></span>
+                <span class="a2-o a2-o-r" id="a2-o-r"></span>
+                <span class="a2-o a2-o-t" id="a2-o-t"></span>
+                <span class="a2-o a2-o-b" id="a2-o-b"></span>
+              </div>
+            </figure>
+
+            <div class="a2-scale">
+              <div class="a2-scale-head">
+                <span>Field strength</span><span>V/m at 1 A/µs</span>
+              </div>
+              <div class="a2-bar" id="a2-bar" aria-hidden="true"></div>
+              <div class="a2-ticks"><span>0</span><span id="a2-tick-max"></span></div>
+              <div class="row a2-cut-row">
+                <label for="a2-cut">colour from <span id="a2-cut-val" class="val"></span></label>
+                <input type="range" id="a2-cut" min="0" max="90" step="5" value="20" />
+              </div>
+            </div>
+          </div>
+        </div>
       </aside>
     </div>
 
