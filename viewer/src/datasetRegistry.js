@@ -15,6 +15,15 @@ export const DATASETS = {
     markers: S0_MARKERS,
     monteCarloURL: S0_MC,
   },
+  "r-02": {
+    label: "r-02 (defaced)",
+    kind: "subject",
+    scalpURL: new URL("./data/r-02/scalp.ply", import.meta.url),
+    skullURL: null,
+    coilURL: null,
+    markers: S1_MARKERS,
+    monteCarloURL: null,
+  },
   "synthetic-demo": {
     label: "synthetic-demo",
     kind: "subject",
