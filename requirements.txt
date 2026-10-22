@@ -5,3 +5,4 @@ pyvista>=0.47
 matplotlib>=3.8
 statsmodels>=0.14
 nilearn>=0.12,<0.15
+SimpleITK>=2.4,<3

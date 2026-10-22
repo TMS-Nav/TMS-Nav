@@ -2,14 +2,94 @@
 // rerun run_pipeline.py to pick up new or renamed mris in saves/
 import S0_MARKERS from "./data/MNI152/markers.json";
 import S0_MC from "url:./data/MNI152/montecarlo.json";
+import S1_MARKERS from "./data/Ernie/markers.json";
+import S1_EFIELD from "./data/Ernie/efield/manifest.json";
+import S2_MARKERS from "./data/T1/markers.json";
+import S3_MARKERS from "./data/T2/markers.json";
+import S4_MARKERS from "./data/T3/markers.json";
+import S5_MARKERS from "./data/T4/markers.json";
+import S6_MARKERS from "./data/T5/markers.json";
 
 export const DATASETS = {
   "MNI152": {
     label: "MNI152",
+    kind: "template",
     scalpURL: new URL("./data/MNI152/scalp.ply", import.meta.url),
+    skullURL: null,
     coilURL: new URL("./data/MNI152/coil.ply", import.meta.url),
     markers: S0_MARKERS,
     monteCarloURL: S0_MC,
+    efield: null,
+  },
+  "Ernie": {
+    label: "Ernie",
+    kind: "subject",
+    scalpURL: new URL("./data/Ernie/scalp.ply", import.meta.url),
+    skullURL: null,
+    coilURL: null,
+    markers: S1_MARKERS,
+    monteCarloURL: null,
+    efield: {
+      manifest: S1_EFIELD,
+      files: {
+        "cortex.ply": new URL("./data/Ernie/efield/cortex.ply", import.meta.url),
+        "t1.u8": new URL("./data/Ernie/efield/t1.u8", import.meta.url),
+        "efield_demo_F4.f32": new URL("./data/Ernie/efield/efield_demo_F4.f32", import.meta.url),
+        "field_demo_F4.u8": new URL("./data/Ernie/efield/field_demo_F4.u8", import.meta.url),
+        "efield_demo_SMA.f32": new URL("./data/Ernie/efield/efield_demo_SMA.f32", import.meta.url),
+        "field_demo_SMA.u8": new URL("./data/Ernie/efield/field_demo_SMA.u8", import.meta.url),
+      },
+    },
+  },
+  "T1": {
+    label: "T1 (defaced)",
+    kind: "subject",
+    scalpURL: new URL("./data/T1/scalp.ply", import.meta.url),
+    skullURL: null,
+    coilURL: null,
+    markers: S2_MARKERS,
+    monteCarloURL: null,
+    efield: null,
+  },
+  "T2": {
+    label: "T2 (defaced)",
+    kind: "subject",
+    scalpURL: new URL("./data/T2/scalp.ply", import.meta.url),
+    skullURL: null,
+    coilURL: null,
+    markers: S3_MARKERS,
+    monteCarloURL: null,
+    efield: null,
+  },
+  "T3": {
+    label: "T3 (defaced)",
+    kind: "subject",
+    scalpURL: new URL("./data/T3/scalp.ply", import.meta.url),
+    skullURL: null,
+    coilURL: null,
+    markers: S4_MARKERS,
+    monteCarloURL: null,
+    efield: null,
+  },
+  "T4": {
+    label: "T4 (defaced)",
+    kind: "subject",
+    scalpURL: new URL("./data/T4/scalp.ply", import.meta.url),
+    skullURL: null,
+    coilURL: null,
+    markers: S5_MARKERS,
+    monteCarloURL: null,
+    efield: null,
+  },
+  "T5": {
+    label: "T5 (defaced)",
+    kind: "subject",
+    scalpURL: new URL("./data/T5/scalp.ply", import.meta.url),
+    skullURL: null,
+    coilURL: null,
+    markers: S6_MARKERS,
+    monteCarloURL: null,
+    efield: null,
   },
 };
 

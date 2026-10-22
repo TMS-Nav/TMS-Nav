@@ -8,13 +8,21 @@
     "build": "npm run clean && parcel build src/index.html --public-url ./ --no-source-maps",
     "check-public": "node scripts/check-public.mjs",
     "predeploy": "npm run check-public && npm run build",
-    "deploy": "gh-pages -d dist --nojekyll --no-history -m \"rebuild the viewer site\""
+    "deploy": "gh-pages -d dist --nojekyll --no-history -m \"rebuild the viewer site\"",
+    "test": "node --test tests/*.test.mjs",
+    "test:browser": "playwright test"
   },
   "dependencies": {
+    "@niivue/niivue": "^0.69.0",
     "three": "^0.182.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "buffer": "^6.0.3",
     "gh-pages": "^6.3.0",
     "parcel": "^2.16.3"
+  },
+  "@parcel/resolver-default": {
+    "packageExports": true
   }
 }

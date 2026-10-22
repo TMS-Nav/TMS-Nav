@@ -1,14 +1,16 @@
 # dump a scene out for the three.js viewer, ply meshes plus a small json. the
 # coil is already placed in RAS so the viewer just loads it as is
 import json
+import os
 from pathlib import Path
+import tempfile
 
 import numpy as np
 import pyvista as pv
 
 # the scalp the browser gets. the full mesh is ~430k triangles and 8 to 11 MB, which
 # is slow to pull into an embedded page. 60k triangles sits within 0.07 mm of the
-# full surface (checked with pyvista compute_implicit_distance on T1) at about 1.5 MB.
+# full surface (checked with pyvista compute_implicit_distance on Ernie) at about 1.5 MB.
 # the targets, the monte carlo and the previews all still use the full mesh
 WEB_SCALP_FACES = 60_000
 
@@ -71,6 +73,19 @@ def _vec(v):
     return [round(float(x), 3) for x in np.asarray(v)]
 
 
+def efield_files(manifest_path):
+    """Every file an aim 2 manifest (efield/export_web.py) points at, in a fixed order."""
+
+    with open(manifest_path) as f:
+        m = json.load(f)
+    files = [m["cortex"]["file"]]
+    if m.get("volume"):
+        files.append(m["volume"]["t1"])
+    for p in m["poses"]:
+        files += [fn for fn in (p.get("surface"), p.get("volume")) if fn]
+    return files
+
+
 def write_registry(data_dir, registry_path):
     """Regenerate datasetRegistry.js from whatever subject folders actually exist.
 
@@ -82,16 +97,17 @@ def write_registry(data_dir, registry_path):
     the monte carlo json is half a MB per subject, so it goes in as a url: asset
     and the viewer fetches only the subject on screen, rather than every subject
     riding in the script bundle. the aim 1 statistics (analysis/aim1_stats.py)
-    come in when that file exists, and as null until then
+    come in when that file exists, and as null until then. the same goes for a
+    subject's aim 2 e field (efield/export_web.py), its manifest plus a url per file
     """
 
     data_dir = Path(data_dir)
     registry_path = Path(registry_path)
 
     subjects = sorted(
-        d.name for d in data_dir.iterdir()
-        if d.is_dir() and (d / "markers.json").exists()
-    )
+        (d.name for d in data_dir.iterdir()
+        if d.is_dir() and (d / "markers.json").exists()),
+        key=lambda name: (name != "MNI152", name))
     if not subjects:
         raise ValueError(f"no processed subjects found under {data_dir}")
 
@@ -105,20 +121,41 @@ def write_registry(data_dir, registry_path):
         # identifier for the import binding
         var = f"S{i}"
         imports.append(f'import {var}_MARKERS from "./data/{name}/markers.json";')
-        imports.append(f'import {var}_MC from "url:./data/{name}/montecarlo.json";')
-
-        # a wiped face is the scan, not a bug, so say so where the subject is picked
         with open(data_dir / name / "markers.json") as f:
-            qc = json.load(f).get("qc", {})
+            payload = json.load(f)
+        qc = payload.get("qc", {})
         label = f"{name} (defaced)" if qc.get("defaced") else name
+        template = name == "MNI152"
+        if template and (data_dir / name / "montecarlo.json").exists():
+            imports.append(f'import {var}_MC from "url:./data/{name}/montecarlo.json";')
+            mc = f"{var}_MC"
+        else:
+            mc = "null"
+        def asset(filename):
+            if (data_dir / name / filename).exists():
+                return f'new URL("./data/{name}/{filename}", import.meta.url)'
+            return "null"
+
+        efield = "null"
+        manifest = data_dir / name / "efield" / "manifest.json"
+        if manifest.exists():
+            imports.append(f'import {var}_EFIELD from "./data/{name}/efield/manifest.json";')
+            urls = "".join(
+                f'        {json.dumps(fn)}: new URL("./data/{name}/efield/{fn}", import.meta.url),\n'
+                for fn in efield_files(manifest)
+            )
+            efield = f"{{\n      manifest: {var}_EFIELD,\n      files: {{\n{urls}      }},\n    }}"
 
         entries.append(
             f'  {json.dumps(name)}: {{\n'
             f'    label: {json.dumps(label)},\n'
-            f'    scalpURL: new URL("./data/{name}/scalp.ply", import.meta.url),\n'
-            f'    coilURL: new URL("./data/{name}/coil.ply", import.meta.url),\n'
+            f'    kind: {json.dumps("template" if template else "subject")},\n'
+            f'    scalpURL: {asset("scalp.ply")},\n'
+            f'    skullURL: {asset("skull.ply")},\n'
+            f'    coilURL: {asset("coil.ply") if template else "null"},\n'
             f'    markers: {var}_MARKERS,\n'
-            f'    monteCarloURL: {var}_MC,\n'
+            f'    monteCarloURL: {mc},\n'
+            f'    efield: {efield},\n'
             f'  }},'
         )
 
@@ -133,6 +170,15 @@ def write_registry(data_dir, registry_path):
         # the real aim 1 numbers, written by analysis/aim1_stats.py off brainsight
         + f"export const AIM1 = {aim1};\n"
     )
-    registry_path.write_text(text, encoding="utf-8")
+    if not registry_path.exists() or registry_path.read_text(encoding="utf-8") != text:
+        # Parcel should observe a complete registry, including on cache re-export.
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".js",
+                                         dir=registry_path.parent, delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(text)
+        try:
+            os.replace(temporary, registry_path)
+        finally:
+            temporary.unlink(missing_ok=True)
     return registry_path, subjects
 

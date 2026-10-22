@@ -321,24 +321,30 @@ body {
   color: #e58386;
 }
 
-#dist .seg {
+/* segmented buttons, the aim 1 metric picker and the aim 2 coil and slice pickers */
+.seg {
   display: flex;
   gap: 4px;
   margin-bottom: 10px;
 }
 
-#dist .seg button {
+.seg button {
   flex: 1;
   background: #2a2d35;
   color: #9aa0aa;
   border: 1px solid #3a3d46;
   border-radius: 4px;
   padding: 6px 6px;
+  font-family: inherit;
   font-size: 13px;
   cursor: pointer;
 }
 
-#dist .seg button.on {
+.seg button:hover {
+  color: #e8e8e8;
+}
+
+.seg button.on {
   background: #3a3d46;
   color: #e8e8e8;
 }
@@ -505,6 +511,7 @@ a:focus-visible {
 }
 
 fieldset {
+  min-width: 0;
   border: 1px solid #3a3d46;
   border-radius: 6px;
   padding: 8px 10px 10px;
@@ -616,6 +623,8 @@ input[type="range"] {
   margin-top: 12px;
   font-size: 11px;
   color: #8f95a0;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
 }
 
 /* where the sample heads come from, the licence asks for the credit */
@@ -815,6 +824,313 @@ input[type="range"] {
   width: 116px;
 }
 
+/* ---- aim tabs ------------------------------------------------------------------
+   the two aims of the study as tabs, top middle of the stage, in the same floating
+   pill as the zoom bar. the ink under the active tab is the accent blue on aim 1 and
+   the field colormap itself on aim 2, the one place the chrome borrows the field */
+:root {
+  --tab-surface: rgba(28, 30, 36, 0.92);
+  --tab-line: #3a3d46;
+  --tab-on: #262932;
+  --text: #e8eaed;
+  --text-2: #c3c7cf;
+  --muted: #8f95a0;
+  --accent: #6f9ed8;
+}
+
+#aim-tabs {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  background: var(--tab-surface);
+  border: 1px solid var(--tab-line);
+  border-radius: 999px;
+}
+
+#aim-tabs [role="tab"] {
+  position: relative;
+  min-width: 92px;
+  min-height: 38px;
+  padding: 0 20px;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 650;
+  text-align: center;
+  color: var(--muted);
+  background: none;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+#aim-tabs [role="tab"]:hover {
+  color: var(--text);
+}
+
+#aim-tabs [aria-selected="true"] {
+  color: var(--text);
+  background: var(--tab-on);
+}
+
+/* the ink sits under the label of the active tab, centred */
+.tab-ink {
+  position: absolute;
+  left: calc(25% + 1px - 14px);
+  bottom: 9px;
+  width: 28px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+/* the slide only answers a click, not the page opening on aim 2 */
+#aim-tabs.ready .tab-ink {
+  transition: left 0.26s cubic-bezier(0.2, 0, 0, 1);
+}
+
+#aim-tabs[data-aim="2"] .tab-ink {
+  left: calc(75% - 1px - 14px);
+  background: var(--turbo, var(--accent));
+}
+
+#aim-tabs [role="tab"]:focus-visible {
+  outline-offset: -2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #aim-tabs.ready .tab-ink {
+    transition: none;
+  }
+}
+
+/* the middle of the stage, when aim 2 has nothing to show for this head */
+.stage-note {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  max-width: 300px;
+  padding: 12px 16px;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+  color: var(--text-2);
+  background: var(--tab-surface);
+  border: 1px solid var(--tab-line);
+  border-radius: 8px;
+  pointer-events: none;
+}
+
+/* ---- aim 2 panels ---------------------------------------------------------------- */
+.val {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.pair-btns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.small-btn {
+  background: #2a2d35;
+  color: var(--text);
+  border: 1px solid #3a3d46;
+  border-radius: 4px;
+  padding: 4px 10px;
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.small-btn:hover,
+.small-btn[aria-pressed="true"] {
+  background: #3a3d46;
+}
+
+.seg button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.seg button:disabled:hover {
+  color: #9aa0aa;
+}
+
+/* the opacity slider tucked under the coil checkbox it belongs to */
+#ui .row.nested {
+  margin: 2px 0 0 22px;
+}
+
+#ui .row.nested > label {
+  line-height: 1.4;
+}
+
+.a2-empty-left {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-2);
+  margin-bottom: 14px;
+}
+
+.a2-empty p {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-2);
+  margin-bottom: 8px;
+}
+
+.a2-empty pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 11.5px;
+  line-height: 1.5;
+  padding: 8px 10px;
+  color: var(--text);
+  background: #24262e;
+  border: 1px solid #3a3d46;
+  border-radius: 6px;
+}
+
+.a2-empty code,
+#a2-empty .cap code {
+  font-size: 11.5px;
+}
+
+.a2-slice {
+  margin-bottom: 12px;
+}
+
+/* the 2d slice, black like a scan, with the four directions on its edges */
+.a2-frame {
+  position: relative;
+  background: #000;
+  border: 1px solid #2f323a;
+  border-radius: 6px;
+  padding: 18px;
+}
+
+#a2-slice-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 340px;
+  object-fit: contain;
+}
+
+.a2-o {
+  position: absolute;
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--muted);
+}
+
+.a2-o-l { left: 6px; top: 50%; transform: translateY(-50%); }
+.a2-o-r { right: 6px; top: 50%; transform: translateY(-50%); }
+.a2-o-t { top: 2px; left: 50%; transform: translateX(-50%); }
+.a2-o-b { bottom: 2px; left: 50%; transform: translateX(-50%); }
+
+/* which slice this is, in the corner of the picture like a scanner console */
+.a2-where {
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  font-size: 11px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.a2-scale {
+  margin-bottom: 14px;
+}
+
+.a2-scale-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
+.a2-scale-head span:last-child {
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+.a2-bar {
+  height: 10px;
+  border-radius: 3px;
+  background: var(--turbo, #333);
+}
+
+.a2-ticks {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  padding: 3px 0 2px;
+}
+
+.a2-cut-row {
+  margin: 8px 0 0;
+}
+
+.a2-cut-row > label {
+  display: block;
+  font-size: 12px;
+  color: var(--text-2);
+  margin-bottom: 4px;
+}
+
+.a2-roi-head,
+.a2-roi-row {
+  display: grid;
+  grid-template-columns: 1fr 62px;
+  gap: 6px;
+  padding: 5px 6px;
+  font-size: 13px;
+}
+
+.a2-roi-head {
+  font-size: 11px;
+  color: var(--muted);
+  border-bottom: 1px solid #3a3d46;
+}
+
+.a2-roi-row {
+  border-bottom: 1px solid #2a2d35;
+}
+
+.a2-roi .c-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.a2-roi {
+  margin-bottom: 14px;
+}
+
+/* the number the study is built on, the field in the target region */
+.a2-roi-row.is-main {
+  font-weight: 650;
+}
+
+/* the paper's comparison, set apart from the single placement numbers above */
+.a2-roi-row.is-cmp {
+  margin-top: 6px;
+  border-top: 1px solid #3a3d46;
+  border-bottom: none;
+}
+
 /* phone sized frames. there is no room for a panel beside the head, so an open
    panel lies over the stage instead, and main.js keeps only one open at a time */
 @media (max-width: 760px) {
@@ -892,10 +1208,93 @@ input[type="range"] {
     width: 72px;
   }
 
-  /* the zoom bar takes the bottom on a phone, so the way out goes up top */
+  /* the zoom bar takes the bottom on a phone, so the way out goes up top, under the
+     aim tabs */
   .open-full {
-    top: 12px;
+    top: 70px;
     right: 12px;
     bottom: auto;
   }
+
+  #aim-tabs [role="tab"] {
+    min-width: 80px;
+    padding: 0 16px;
+  }
+}
+/* Native MRI inspection and subject review */
+[hidden] { display: none !important; }
+#view-tabs { position:absolute; top:10px; left:28px; z-index:5; display:flex; gap:5px; }
+#view-tabs button, #mri-panel button, #review-panel button { background:#2a303c; color:#eee; border:1px solid #515a6b; border-radius:5px; padding:6px 9px; cursor:pointer; }
+#view-tabs [aria-selected="true"] { background:#315b76; }
+#stage.mri-active #c, #stage.mri-active .labels-3d, #stage.mri-active #zoom { visibility:hidden; }
+#mri-panel { position:absolute; inset:50px 20px 5px; display:flex; flex-direction:column; background:#101318; z-index:3; }
+#mri-toolbar { display:flex; flex-wrap:wrap; gap:10px; padding:8px; align-items:center; font-size:12px; }
+#mri-toolbar input[type=number] { width:65px; }
+#mri-toolbar select, #mri-toolbar input, #review-panel input, #review-panel select { background:#262c36; color:#eee; border:1px solid #505967; border-radius:3px; padding:3px; }
+#mri-status { min-height:35px; font-size:12px; padding:6px; color:#b8dce9; }
+#mri-canvas-wrap { flex:1; position:relative; min-height:180px; }
+#mri-canvas { width:100%; height:100%; display:block; }
+#slice-controls { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; padding:8px; font-size:12px; }
+#slice-controls input { width:100%; }
+#mri-point-actions { display:flex; flex-wrap:wrap; gap:5px; padding:5px; }
+#review-panel h2 { margin-bottom:10px; }
+#review-count { color:#f0c476; font-weight:600; }
+.detector-settings { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:10px 0; }
+.detector-settings label { display:flex; flex-direction:column; gap:4px; font-size:11px; }
+.detector-settings input, .detector-settings select { min-width:0; width:100%; }
+.candidate-scroll { max-height:42vh; overflow:auto; margin:12px 0; }
+#candidate-table { border-collapse:collapse; width:100%; font-size:11px; }
+#candidate-table th, #candidate-table td { padding:6px 3px; border-bottom:1px solid #39414f; text-align:left; vertical-align:top; overflow-wrap:anywhere; }
+#candidate-table button { font-size:10px; padding:3px; margin:2px; }
+#review-panel summary { cursor:pointer; margin-top:12px; }
+
+/* ---- the aim 1 / aim 2 tabs around the views above ---------------------------------
+   the 3D head / anatomical MRI buttons and the MRI panel belong to aim 1, so they go
+   away on aim 2. the MRI panel starts below the aim tab bar instead of under it */
+#app[data-aim="2"] #view-tabs,
+#app[data-aim="2"] #mri-panel {
+  display: none !important;
+}
+
+/* the two aim 1 views as a smaller pill of the same kind as the aim tabs, no ink,
+   so they read as a choice inside aim 1 rather than a second top level. centred on
+   the aim bar's height */
+#stage #view-tabs {
+  top: 14px;
+  left: 20px;
+  gap: 2px;
+  padding: 4px;
+  background: var(--tab-surface);
+  border: 1px solid var(--tab-line);
+  border-radius: 999px;
+}
+
+#stage #view-tabs button {
+  min-height: 34px;
+  padding: 0 14px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  background: none;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+#stage #view-tabs button:hover {
+  color: var(--text);
+}
+
+#stage #view-tabs button[aria-selected="true"] {
+  color: var(--text);
+  background: var(--tab-on);
+}
+
+#stage #view-tabs button:focus-visible {
+  outline-offset: -2px;
+}
+
+#mri-panel {
+  top: 72px;
 }

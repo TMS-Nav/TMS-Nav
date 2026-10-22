@@ -19,3 +19,6 @@ viewer/src/data/
 
 # agent tooling config, local only
 .claude/
+test-results/
+playwright-report/
+.pytest_cache/

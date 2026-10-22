@@ -6,13 +6,35 @@ variability in a Three.js viewer. Recorded Brainsight poses support the Aim 1
 geometric comparison; a separate SimNIBS workflow supports Aim 2 electric-field modeling.
 
 The MNI demo and simulated placements are for development and illustration.
-Generated targets are anatomical approximations, not individualized fMRI targets
-or detected MRI-visible cap fiducials.
+Template targets are anatomical approximations, not individualized fMRI targets.
+Individual subjects use a separate cached reconstruction pipeline with reviewable
+MRI fiducial candidates, native scalp meshes, manual landmark confirmation and
+subject-specific EEG estimates, linked anatomical MRI slices and live landmark previews. See the [complete subject workflow](docs/subject-reconstruction.md)
+and [verification report](docs/subject-reconstruction-report.md).
 
 ## Quick start
 
 Use **Python 3.12** (the verified local version) and **Node.js 22 LTS or newer** with
 npm. Run these commands from the repository root after cloning it.
+
+### Preferred micromamba environment
+
+```bash
+micromamba create -y -f environment.yml
+eval "$(micromamba shell hook --shell bash)"
+micromamba activate tms312
+python run_pipeline.py --template
+python ingest_subject.py sub-001 /path/to/native_T1w.nii.gz
+# Or: python ingest_subject.py sub-001
+# reads saves/subjects/sub-001/T1w.nii.gz and optional corrections/transforms
+npm --prefix viewer ci
+python run_viewer.py
+```
+
+Python 3.12 and Node 22 were verified in `tms312`. The environment file includes a
+Linux library for browser tests; omit `alsa-lib` on other platforms. The alternative
+venv instructions below remain available. MNI assets are generated once; subjects
+then require only native T1w, with no fMRI or registration prerequisite.
 
 ### Windows PowerShell
 
@@ -76,10 +98,11 @@ For patient scans:
 - Prefer intact facial anatomy and ears. Defaced scans are supported and flagged,
   but missing anatomy cannot be recovered and landmarks become approximate.
 - Preserve a valid spatial affine in millimeters. Landmark heuristics assume a
-  reasonably centered head aligned with anatomical RAS directions.
+  head approximately aligned with anatomical RAS directions; all proposed landmarks require review.
 - Approximately 1 mm resolution is preferred; anisotropic spacing is supported
   and no exact voxel size is enforced.
-- A 3D volume is expected; only the first volume of a 4D image is processed.
+- Native subjects require 3D volumes, explicit spatial units and consistent coded
+  qform/sform metadata. Ambiguous headers and 4D inputs are rejected.
 - Store only intended structural inputs in discovery folders. The pipeline does
   not identify contrast: T2, fMRI, mask and segmentation NIfTIs would also be selected.
 
@@ -106,14 +129,15 @@ saves/
 ```
 
 Discovery skips `templates`, `previews`, `brainsight`, `aim1`, `efield`, `m2m`,
-`m2m_*` folders and hidden directories. Explicit paths are resolved from the
+`derivatives`, `m2m_*` folders and hidden directories. Explicit paths are resolved from the
 current working directory. Default inputs and all outputs are anchored to the
 repository, so the script can also run from another directory.
 
 ### Outputs and viewer compatibility
 
-Each scan produces front/side PNGs and a distance histogram in `saves/previews/`.
-The viewer keeps its existing flat per-dataset structure:
+The MNI demo produces front/side PNGs and a distance histogram in `saves/previews/`.
+Subjects produce slice QC, reusable native derivatives and confidence reports in
+`saves/derivatives/subjects/<ID>/`. The viewer retains its per-dataset structure:
 
 ```text
 viewer/src/data/
@@ -123,7 +147,9 @@ viewer/src/data/
 │   ├── markers.json
 │   └── montecarlo.json
 └── ms__sub-001__T1w/
-    └── ...                            # same four files
+    ├── scalp.ply
+    ├── markers.json                   # fiducials, landmarks, EEG, confidence/QC
+    └── skull.ply                      # only with supplied skull segmentation
 ```
 
 Legacy `T1.nii.gz` still maps to `data/T1/`. Cohort paths map to names such as
@@ -144,7 +170,7 @@ statistics and electric-field drivers retain their documented input layouts.
 ## Editing registration landmarks
 
 Select Nasion, Inion, LPA or RPA in the viewer's **edit landmarks** panel, or click
-its yellow marker. Enter X/Y/Z in millimeters and **Apply coordinates**. Entries
+its yellow cube. MRI fiducial diamonds are editable too. Enter X/Y/Z in millimeters and **Apply coordinates**. Entries
 are constrained to the displayed scalp by default; uncheck the constraint for an
 exact off-surface coordinate. **Snap to scalp** projects the current point.
 **Pick on scalp** places it at your next click on the head; Escape cancels.
@@ -154,11 +180,16 @@ Direction buttons take a step in the local tangent plane and project back onto
 the scalp triangles. The step is a tangent displacement, not a geodesic distance.
 **Reset selected** restores the pipeline position. Edits are kept per dataset in
 browser storage when available; **Export JSON** downloads them with frame metadata.
-They do not modify Python files or recompute Monte Carlo registration/statistics.
-Changed source landmark exports invalidate saved browser edits.
+For interactive subject review, launch `python run_viewer.py`: the Anatomical MRI
+tab supports linked slices and point placement; landmark edits recompute EEG on the
+cached scalp. **Save reviewed changes** persists corrections and derivatives.
+Without the local API, save exported JSON as `saves/subjects/<ID>/corrections.json`
+and rerun `python ingest_subject.py <ID>`. Original input files stay unchanged.
+Template edits do not recompute Monte Carlo registration/statistics. Changed source
+landmark exports invalidate saved browser edits.
 
 Regenerate the MNI demo with `python run_pipeline.py --template` for explicit
-`MNI152NLin2009aSym` metadata. Patient scans remain subject RAS until registered.
+`MNI152NLin2009aSym` metadata. Primary patient coordinates remain native subject RAS even when secondary MNI coordinates are available.
 See the [MNI migration plan](docs/mni-migration.md) for the source audit and rollout.
 
 ## Aim 1 statistics
@@ -246,7 +277,8 @@ copyright notice; the linked license includes the complete warranty statement.
 
 ## EEG 10–20 scalp marking
 
-Run `python run_pipeline.py --template` (or supply a subject MRI), then rebuild
+Run `python run_pipeline.py --template` for the demo, or ingest a subject and
+confirm its four anatomical anchors as described in the subject workflow, then rebuild
 the viewer with `npm run build` in `viewer/`. The **10–20 electrodes** and
 **10–20 dashed arcs** layer switches independently control the cyan scalp sites
 and tape constructions. Click a site to read its physical coordinates: MNI RAS mm
@@ -281,8 +313,8 @@ EEG fields continue to load.
 The cyan EEG cap is separate from the existing approximate MRI target markers and
 Monte Carlo results. These five targets are fixed-direction scalp placeholders,
 not anatomically selected Brainsight targets; see the [target-definition audit](docs/target-definitions.md).
-Browser landmark edits hide the cap to avoid displaying it
-as current; the exported cap always uses the Python pipeline's landmarks. Browser
-edits do not yet feed back into Python or recompute the cap.
+With `run_viewer.py`, landmark edits update the cap after a short pause; usable
+unconfirmed anchors show a labeled provisional preview. Static ingestion withholds
+EEG until the four anchors are confirmed. Fiducial-only edits preserve the cap. Subject views do not display Monte Carlo dots or template target placeholders.
 
 Marking reference: [Seeck et al., IFCN standardized electrode array (2017)](https://doi.org/10.1016/j.clinph.2017.06.254).

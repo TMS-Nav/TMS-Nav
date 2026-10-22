@@ -1,0 +1,10 @@
+name: tms312
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - nodejs=22
+  - sel(linux): alsa-lib
+  - pip:
+      - -r requirements-dev.txt

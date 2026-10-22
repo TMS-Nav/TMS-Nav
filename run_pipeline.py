@@ -10,7 +10,7 @@ from src.eeg_cap import eeg_cap
 from src.export_mc import export_monte_carlo
 from src.export_web import export_web, write_registry
 from src.head_surface import scalp_surface
-from src.mri_inputs import ROOT, SAVE_DIR, dataset_name, find_mris, resolve_inputs
+from src.mri_inputs import ROOT, SAVE_DIR, TEMPLATE_DIR, dataset_name, find_mris, resolve_inputs
 from src.scene import Scene
 from src.skull_boundary import head_mask, load_mri_volume
 from src.stats import render_distance_hist
@@ -79,6 +79,12 @@ def main(argv=None):
 
     for mri, name in inputs:
         print(f"\n=== {mri} ===")
+        is_template = name == "MNI152" and (args.template or mri.is_relative_to(TEMPLATE_DIR))
+        if not is_template:
+            from src.subject_ingest import ingest_subject
+            output, cached = ingest_subject(name, mri)
+            print(f"{'cached' if cached else 'reconstructed'} subject: {output}")
+            continue
         scene = build_scene(mri, name=name)
         if args.template or (name == "MNI152" and "templates" in mri.parts):
             scene.coordinate_frame = {

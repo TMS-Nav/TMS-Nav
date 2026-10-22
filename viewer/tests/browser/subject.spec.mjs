@@ -1,0 +1,55 @@
+import {test, expect} from '@playwright/test';
+
+test('MNI default, subject overlays, corrections and return to MNI', async ({page}) => {
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/');
+  await expect(page.locator('#stage')).toHaveAttribute('data-subject','MNI152');
+  await expect(page.locator('#subject-select')).toHaveValue('MNI152');
+  await expect(page.locator('#toggle-mc')).toBeEnabled();
+  await page.locator('#subject-select').selectOption('synthetic-demo');
+  await expect(page.locator('#stage')).toHaveAttribute('data-subject','synthetic-demo');
+  await expect(page.locator('#toggle-mc')).toBeDisabled();
+  await expect(page.locator('#toggle-skull')).toBeEnabled();
+  await expect(page.locator('#mc-panel')).toBeHidden();
+  await expect(page.locator('#subject-qc')).toContainText('MRI candidates');
+  await expect(page.locator('#eeg-status')).toContainText('Scalp tape arcs');
+  await expect(page.locator('#landmark-select option')).toHaveCount(7);
+  for (const id of ['toggle-skull','toggle-fiducials','toggle-landmarks','toggle-eeg']) {
+    await page.locator('#'+id).uncheck(); await expect(page.locator('#'+id)).not.toBeChecked();
+    await page.locator('#'+id).check();
+  }
+  await page.screenshot({path:'test-results/synthetic-subject.png'});
+  await page.locator('#landmark-select').selectOption('fid-001');
+  await page.locator('#landmark-snap').uncheck();
+  const previous = Number(await page.locator('#landmark-x').inputValue());
+  await page.locator('#landmark-x').fill(String(previous+1));
+  await page.getByRole('button',{name:'Apply coordinates',exact:true}).click();
+  await expect(page.locator('#info')).toContainText('manually_confirmed');
+  await expect(page.locator('#eeg-status')).toContainText('Scalp tape arcs');
+  const downloadPromise=page.waitForEvent('download');
+  await page.locator('#landmark-export').click();
+  const download=await downloadPromise;
+  await download.saveAs(test.info().outputPath('synthetic-demo-corrections.json'));
+  const stream=await download.createReadStream();
+  const chunks=[];for await(const chunk of stream)chunks.push(chunk);
+  const correction=JSON.parse(Buffer.concat(chunks).toString());
+  expect(correction.subject).toBe('synthetic-demo');
+  expect(correction.axes).toBe('RAS');
+  expect(correction.source_sha256).toMatch(/^[0-9a-f]{64}$/);
+  expect(correction.detection_signature).toMatch(/^[0-9a-f]{64}$/);
+  expect(correction.fiducials).toHaveLength(1);
+  expect(correction.fiducials[0].position[0]).toBeCloseTo(previous+1,3);
+  expect(correction.landmarks).toHaveLength(4);
+  await page.reload();
+  await expect(page.locator('#stage')).toHaveAttribute('data-subject','MNI152');
+  await page.locator('#subject-select').selectOption('synthetic-demo');
+  await expect(page.locator('#stage')).toHaveAttribute('data-subject','synthetic-demo');
+  await expect(page.locator('#landmark-status')).toContainText('Restored browser edits');
+  await page.locator('#subject-select').selectOption('MNI152');
+  await expect(page.locator('#stage')).toHaveAttribute('data-subject','MNI152');
+  await expect(page.locator('#toggle-mc')).toBeEnabled();
+  await expect(page.locator('#mc-panel')).toBeVisible();
+  await expect(page.locator('#fatal')).toBeHidden();
+  expect(errors).toEqual([]);
+});

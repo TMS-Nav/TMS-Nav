@@ -7,6 +7,7 @@ from pathlib import Path
 from efield.config import (
     COIL_FILE,
     DIDT,
+    MAP_TO_VOL,
     SIMNIBS_PYTHON,
     SIM_ROOT,
     SUPRATHRESHOLD_ABS_VM,
@@ -32,6 +33,7 @@ class Job:
     didt: float = DIDT
     fields: str = DEFAULT_FIELDS
     map_to_surf: bool = True
+    map_to_vol: bool = MAP_TO_VOL
     # the two hotspot cuts, carried in the job so a result can always say what
     # threshold produced it. see roi_metrics in runner_simnibs.py for why there
     # are two of them
@@ -58,6 +60,7 @@ class Job:
         return {
             "subject": self.subject, "m2m": str(self.m2m), "coil_file": self.coil_file,
             "didt": float(self.didt), "fields": self.fields, "map_to_surf": bool(self.map_to_surf),
+            "map_to_vol": bool(self.map_to_vol),
             "supra_frac": float(self.supra_frac), "supra_abs_vm": float(self.supra_abs_vm),
             "out_dir": str(self.out_dir), "snap_to_skin": bool(self.snap_to_skin),
             "poses_source": self.poses_source, "notes": list(self.notes),
@@ -72,6 +75,7 @@ class Job:
                    rois=[RoiSpec.from_dict(r) for r in d.get("rois", [])],
                    coil_file=d.get("coil_file", COIL_FILE), didt=float(d.get("didt", DIDT)),
                    fields=d.get("fields", DEFAULT_FIELDS), map_to_surf=bool(d.get("map_to_surf", True)),
+                   map_to_vol=bool(d.get("map_to_vol", MAP_TO_VOL)),
                    supra_frac=float(d.get("supra_frac", SUPRATHRESHOLD_FRAC)),
                    supra_abs_vm=float(d.get("supra_abs_vm", SUPRATHRESHOLD_ABS_VM)),
                    out_dir=d.get("out_dir", ""), snap_to_skin=bool(d.get("snap_to_skin", False)),

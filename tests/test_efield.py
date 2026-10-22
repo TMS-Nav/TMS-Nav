@@ -112,6 +112,10 @@ def test_job_json_round_trip():
         back = Job.read_json(path)
     assert back.subject == "T9" and len(back.poses) == 2 and len(back.rois) == 1
     assert back.coil_file == config.COIL_FILE and back.didt == config.DIDT
+    assert back.map_to_vol == config.MAP_TO_VOL
+    with tempfile.TemporaryDirectory() as tmp:
+        vol = Job(subject="T9", m2m=tmp, poses=poses, rois=rois, out_dir=tmp, map_to_vol=True)
+        assert Job.read_json(vol.write_json(Path(tmp) / "job.json")).map_to_vol is True
     assert np.allclose(back.poses[0].matsimnibs(), poses[0].matsimnibs(), atol=1e-5)
     assert back.rois[0].to_dict() == rois[0].to_dict()
     cmd = runner_command(path)
@@ -358,6 +362,101 @@ def test_one_mri_rep_pairs_every_eeg_rep():
     assert abs(pct[("SMA", 1)]) < 1e-9 and abs(pct[("SMA", 2)] - 100.0) < 1e-9
 
 
+def test_nearest_values_keep_the_field():
+    from efield.export_web import nearest_values
+
+    rng = np.random.default_rng(3)
+    src = rng.normal(size=(500, 3)) * 40.0
+    e = rng.random(500)
+    # a subset of the original nodes, nudged less than half the closest spacing
+    keep = np.arange(0, 500, 7)
+    dst = src[keep] + 1e-4
+    out = nearest_values(src, e, dst)
+    assert np.array_equal(out, e[keep])
+    assert out.max() == e[keep].max()
+
+
+def _surface_npz(path, scale=1.0):
+    # an octahedron is enough of a closed surface for the decimation to pass through
+    nodes = np.array([[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]], float) * 50.0
+    tri = np.array([[0, 2, 4], [2, 1, 4], [1, 3, 4], [3, 0, 4], [2, 0, 5], [1, 2, 5], [3, 1, 5], [0, 3, 5]])
+    e = np.arange(6, dtype=float) * scale
+    np.savez(path, nodes=nodes, triangles=tri, E_magn=e, E_normal=-e)
+    return e
+
+
+def test_export_cortex_writes_one_field_per_pose():
+    from efield.export_web import export_cortex
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        e1 = _surface_npz(tmp / "a.npz")
+        e2 = _surface_npz(tmp / "b.npz", scale=2.0)
+        out = export_cortex([tmp / "a.npz", tmp / "b.npz"], ["a", "b"], tmp / "web", faces=8)
+        assert (tmp / "web" / "cortex.ply").exists()
+        n = out["n_vertices"]
+        f1 = np.fromfile(tmp / "web" / "efield_a.f32", dtype="<f4")
+        f2 = np.fromfile(tmp / "web" / "efield_b.f32", dtype="<f4")
+    assert n == 6 and len(f1) == n and len(f2) == n
+    assert sorted(f1.tolist()) == sorted(e1.tolist()) and np.allclose(f2, 2.0 * f1)
+    assert out["poses"]["b"]["peak"] == e2.max()
+
+
+def test_export_volumes_grid_and_scale():
+    import nibabel as nib
+    from efield.export_web import export_volumes
+
+    shape = (40, 44, 36)
+    aff = np.array([[1.0, 0, 0, -20], [0, 1.0, 0, -22], [0, 0, 1.0, -18], [0, 0, 0, 1]])
+    lab = np.zeros(shape, np.uint8)
+    lab[5:35, 6:38, 4:32] = 5                    # scalp
+    lab[10:30, 12:32, 9:27] = 2                  # grey matter inside it
+    t1 = (lab * 20).astype(np.float32)
+    field = np.where(lab == 2, 0.8, 1.5).astype(np.float32)     # higher in the scalp, masked out
+    field[lab == 0] = 0
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        for name, data in (("t1", t1), ("lab", lab), ("e", field)):
+            nib.save(nib.Nifti1Image(data, aff), str(tmp / f"{name}.nii.gz"))
+        vol = export_volumes(tmp / "t1.nii.gz", tmp / "lab.nii.gz", [tmp / "e.nii.gz"], ["p"],
+                             tmp / "web", color_max=1.0, step_mm=2.0)
+        nx, ny, nz = vol["dims"]
+        raw_t1 = (tmp / "web" / "t1.u8").read_bytes()
+        raw_e = np.frombuffer((tmp / "web" / "field_p.u8").read_bytes(), np.uint8)
+    assert len(raw_t1) == nx * ny * nz and len(raw_e) == nx * ny * nz
+    A = np.asarray(vol["affine"])
+    assert np.allclose(np.sqrt((A[:3, :3] ** 2).sum(axis=0)), 2.0)
+    # x fastest: the voxel at grid (i, j, k) is byte i + nx * (j + ny * k)
+    e = raw_e.reshape(nz, ny, nx).transpose(2, 1, 0)
+    # the grey matter centre, mapped back through the affine, holds 0.8 V/m within one step
+    centre = np.linalg.inv(A) @ np.array([0.0, 0.0, 0.0, 1.0])
+    i, j, k = np.rint(centre[:3]).astype(int)
+    assert abs(e[i, j, k] * vol["field_step"] - 0.8) <= vol["field_step"]
+    # nothing outside the brain, though the scalp had more field
+    assert e.max() * vol["field_step"] <= 0.8 + vol["field_step"]
+
+
+def test_registry_has_efield_only_with_a_manifest():
+    from src.export_web import write_registry
+
+    with tempfile.TemporaryDirectory() as tmp:
+        data = Path(tmp) / "data"
+        for s in ("A", "B"):
+            (data / s).mkdir(parents=True)
+            (data / s / "markers.json").write_text("{}")
+        (data / "A" / "efield").mkdir()
+        manifest = {"cortex": {"file": "cortex.ply"}, "volume": {"t1": "t1.u8"},
+                    "poses": [{"surface": "efield_p.f32", "volume": "field_p.u8"}]}
+        (data / "A" / "efield" / "manifest.json").write_text(json.dumps(manifest))
+        path, subjects = write_registry(data, Path(tmp) / "reg.js")
+        text = path.read_text()
+    assert subjects == ["A", "B"]
+    assert 'import S0_EFIELD from "./data/A/efield/manifest.json";' in text
+    for fn in ("cortex.ply", "t1.u8", "efield_p.f32", "field_p.u8"):
+        assert f'new URL("./data/A/efield/{fn}", import.meta.url)' in text
+    assert "S1_EFIELD" not in text and "efield: null" in text
+
+
 TESTS = [
     test_matsimnibs_round_trip,
     test_orientation_of_known_rotation,
@@ -369,6 +468,10 @@ TESTS = [
     test_poses_come_from_the_exports,
     test_one_mri_rep_pairs_every_eeg_rep,
     test_post_processing_on_fake_arrays,
+    test_nearest_values_keep_the_field,
+    test_export_cortex_writes_one_field_per_pose,
+    test_export_volumes_grid_and_scale,
+    test_registry_has_efield_only_with_a_manifest,
     test_headmodel_finds_ernie,
     test_runner_dry_run_on_ernie,
 ]
