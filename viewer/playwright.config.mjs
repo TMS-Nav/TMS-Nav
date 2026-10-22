@@ -5,6 +5,6 @@ export default defineConfig({
     launchOptions:{args:['--enable-unsafe-swiftshader'],
       ...(process.env.CONDA_PREFIX ? {env:{...process.env,
         LD_LIBRARY_PATH:process.env.CONDA_PREFIX+'/lib'+(process.env.LD_LIBRARY_PATH ? ':'+process.env.LD_LIBRARY_PATH : '')}} : {})}},
-  webServer:{command:'npm run dev -- --host 127.0.0.1', url:'http://127.0.0.1:1234',
-    reuseExistingServer:!process.env.CI, timeout:120000},
+  webServer:[{command:'python ../run_viewer.py --api-only',url:'http://127.0.0.1:8765/api/health',reuseExistingServer:!process.env.CI,timeout:30000},{command:'npm run dev -- --host 127.0.0.1', url:'http://127.0.0.1:1234',
+    reuseExistingServer:!process.env.CI, timeout:120000}],
 });

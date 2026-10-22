@@ -902,3 +902,29 @@ input[type="range"] {
     bottom: auto;
   }
 }
+/* Native MRI inspection and subject review */
+[hidden] { display: none !important; }
+#view-tabs { position:absolute; top:10px; left:28px; z-index:5; display:flex; gap:5px; }
+#view-tabs button, #mri-panel button, #review-panel button { background:#2a303c; color:#eee; border:1px solid #515a6b; border-radius:5px; padding:6px 9px; cursor:pointer; }
+#view-tabs [aria-selected="true"] { background:#315b76; }
+#stage.mri-active #c, #stage.mri-active .labels-3d, #stage.mri-active #zoom { visibility:hidden; }
+#mri-panel { position:absolute; inset:50px 20px 5px; display:flex; flex-direction:column; background:#101318; z-index:3; }
+#mri-toolbar { display:flex; flex-wrap:wrap; gap:10px; padding:8px; align-items:center; font-size:12px; }
+#mri-toolbar input[type=number] { width:65px; }
+#mri-toolbar select, #mri-toolbar input, #review-panel input, #review-panel select { background:#262c36; color:#eee; border:1px solid #505967; border-radius:3px; padding:3px; }
+#mri-status { min-height:35px; font-size:12px; padding:6px; color:#b8dce9; }
+#mri-canvas-wrap { flex:1; position:relative; min-height:180px; }
+#mri-canvas { width:100%; height:100%; display:block; }
+#slice-controls { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; padding:8px; font-size:12px; }
+#slice-controls input { width:100%; }
+#mri-point-actions { display:flex; flex-wrap:wrap; gap:5px; padding:5px; }
+#review-panel h2 { margin-bottom:10px; }
+#review-count { color:#f0c476; font-weight:600; }
+.detector-settings { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:10px 0; }
+.detector-settings label { display:flex; flex-direction:column; gap:4px; font-size:11px; }
+.detector-settings input, .detector-settings select { min-width:0; width:100%; }
+.candidate-scroll { max-height:42vh; overflow:auto; margin:12px 0; }
+#candidate-table { border-collapse:collapse; width:100%; font-size:11px; }
+#candidate-table th, #candidate-table td { padding:6px 3px; border-bottom:1px solid #39414f; text-align:left; vertical-align:top; overflow-wrap:anywhere; }
+#candidate-table button { font-size:10px; padding:3px; margin:2px; }
+#review-panel summary { cursor:pointer; margin-top:12px; }

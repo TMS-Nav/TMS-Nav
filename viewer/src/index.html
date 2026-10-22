@@ -110,6 +110,25 @@
 
       <main id="stage">
         <canvas id="c"></canvas>
+        <nav id="view-tabs" aria-label="View"><button id="tab-head" aria-selected="true">3D head</button><button id="tab-mri" aria-selected="false">Anatomical MRI</button></nav>
+        <section id="mri-panel" hidden aria-label="Anatomical MRI slices">
+          <div id="mri-toolbar">
+            <label>Layout <select id="mri-layout"><option value="multi">Three planes</option><option value="axial">Axial</option><option value="coronal">Coronal</option><option value="sagittal">Sagittal</option></select></label>
+            <label><input id="mri-radiological" type="checkbox" /> Radiological display</label>
+            <label><input id="mri-overlays" type="checkbox" /> Fiducials / landmarks</label>
+            <label>Black <input id="mri-black" type="number" step="any" /></label><label>White <input id="mri-white" type="number" step="any" /></label>
+            <label>Zoom <input id="mri-zoom" type="range" min="40" max="400" value="100" /></label>
+            <button id="mri-reset">Reset view</button>
+          </div>
+          <p id="mri-status" role="status">Open anatomical MRI to load the native T1w.</p>
+          <div id="mri-canvas-wrap"><canvas id="mri-canvas"></canvas></div>
+          <div id="slice-controls">
+            <label>Sagittal <input id="slice-x" type="range" min="0" max="1000" value="500" /></label>
+            <label>Coronal <input id="slice-y" type="range" min="0" max="1000" value="500" /></label>
+            <label>Axial <input id="slice-z" type="range" min="0" max="1000" value="500" /></label>
+          </div>
+          <div id="mri-point-actions"><button id="mri-place">Place selected point at crosshair</button><button id="mri-add">Add fiducial at crosshair</button></div>
+        </section>
 
         <button type="button" class="edge-tab edge-left" data-panel="ui" aria-controls="ui" aria-expanded="true" aria-label="Hide controls">
           <span class="edge-chev" aria-hidden="true"></span>
@@ -131,7 +150,28 @@
       </main>
 
       <aside id="dist" class="panel" aria-label="aim 1 metrics">
-        <h2>Aim 1 Metrics</h2>
+        <section id="review-panel" hidden>
+          <h2>Cap marker review</h2><p id="review-count" role="status"></p>
+          <p class="hint">Inspect every center in all three MRI planes. Selecting a row moves the slice crosshair.</p>
+          <details open><summary>Detection settings</summary>
+          <label>Starting profile <select id="detect-profile"><option value="custom">Current / custom</option><option value="liquimark">LiquiMark 8 mm — review required</option></select></label>
+          <div class="detector-settings">
+            <label>Method <select id="detect-mode"><option value="bright">Brightness</option><option value="local">Local contrast</option></select></label>
+            <label>Threshold (blank = auto)<input id="detect-threshold" type="number" min="0" step="any" /></label>
+            <label>Min volume mm³<input id="detect-min-volume" type="number" value="8" min="0" /></label>
+            <label>Max volume mm³<input id="detect-max-volume" type="number" value="800" min="1" /></label>
+            <label>Max elongation<input id="detect-elongation" type="number" value="3" min="1" step=".5" /></label>
+            <label>Max depth mm<input id="detect-depth" type="number" value="4" min="0" /></label>
+            <label>Max outside mm<input id="detect-distance" type="number" value="15" min="0" /></label>
+            <label>Expected count<input id="detect-expected" type="number" value="5" min="1" max="100" /></label>
+          </div><label><input id="detect-split" type="checkbox" /> Separate touching peaks</label>
+          <button id="detect-run">Preview detection</button></details>
+          <p id="review-status" class="hint" role="status"></p>
+          <div class="candidate-scroll"><table id="candidate-table"><thead><tr><th>Candidate</th><th>mm³ / ratio</th><th>Review</th></tr></thead><tbody></tbody></table></div>
+          <button id="review-save">Save reviewed changes</button>
+          <p class="hint">Save writes corrections and rebuilds derivatives. Live landmark previews reuse the cached scalp.</p>
+        </section>
+        <div id="metrics-panel"><h2>Aim 1 Metrics</h2>
         <div class="seg">
           <button type="button" data-metric="miss" class="on" title="distance from a placement to the MRI target">displacement</button>
           <button type="button" data-metric="pair" title="distance between two placements of the same target">repeat</button>
@@ -149,7 +189,7 @@
         <button class="disclose section" id="group-head" type="button" aria-expanded="false" aria-controls="group">
           <span class="chev" aria-hidden="true"></span><span id="group-title">Brainsight results</span>
         </button>
-        <div id="group" hidden></div>
+        <div id="group" hidden></div></div>
       </aside>
     </div>
 

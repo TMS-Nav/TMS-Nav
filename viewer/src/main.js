@@ -9,10 +9,12 @@ import { CSS2DRenderer, CSS2DObject } from "three/examples/jsm/renderers/CSS2DRe
 import { DATASETS, AIM1 } from "./datasetRegistry.js";
 import { defaultDatasetKey, isTemplateDataset, loadDatasetAssets } from "./datasetAssets.mjs";
 import { createLandmarkEditor } from "./landmarkEditor.js";
+import { createSubjectReview } from "./subjectReview.js";
 
 // the middle column between the two side panels. everything is sized off this box,
 // not the window, so hiding a panel recentres the head
 const stage = document.getElementById("stage");
+let review = null, currentMarkers = null, currentKey = "";
 
 const SCALP_COLOR = 0xcccccc;
 const COIL_COLOR = 0x1f77b4;
@@ -50,6 +52,7 @@ renderer.setSize(stage.clientWidth, stage.clientHeight);
 // html labels ride on top of the canvas
 const labelRenderer = new CSS2DRenderer();
 labelRenderer.setSize(stage.clientWidth, stage.clientHeight);
+labelRenderer.domElement.classList.add("labels-3d");
 labelRenderer.domElement.style.position = "absolute";
 labelRenderer.domElement.style.top = "0";
 labelRenderer.domElement.style.pointerEvents = "none";
@@ -197,10 +200,12 @@ const plyLoader = new PLYLoader();
 const landmarkEditor = createLandmarkEditor({
   onChange: (marker) => {
     showInfo(marker);
-    eegStale = true; eegGroup.visible = false; arcGroup.visible = false;
-    for (const id of ["toggle-eeg", "toggle-arcs"]) document.getElementById(id).disabled = true;
-    document.getElementById("eeg-status").textContent = "Points edited: EEG cap hidden. Export corrections and rerun ingestion to recompute subject derivatives.";
+    if (currentIsTemplate) {
+      eegStale = true; eegGroup.visible = false; arcGroup.visible = false;
+      document.getElementById("eeg-status").textContent = "Template edits require rebuilding the MNI demo.";
+    } else review?.changed(marker);
   },
+  onSelect: (marker) => { if (marker) showInfo(marker); },
   showLandmarks: (marker) => {
     landmarkGroup.visible = true;
     if (marker?.category === "fiducial") {
@@ -212,6 +217,42 @@ const landmarkEditor = createLandmarkEditor({
     document.getElementById("toggle-landmarks").checked = true;
     saveLayerState(layerState);
   },
+});
+function pointData() {
+  return {...currentMarkers, landmarks:landmarkGroup.children.map(m=>m.userData.marker),
+    fiducials:fiducialGroup.children.map(m=>m.userData.marker)};
+}
+function clearGroup(group) {
+  for (const child of [...group.children]) {
+    child.traverse(node=>{if(node.element)node.element.remove();});
+    group.remove(child);
+    if(child.geometry && ![unitSphere,unitBox,unitDiamond].includes(child.geometry))child.geometry.dispose();
+    child.material?.dispose();
+  }
+}
+review = createSubjectReview({
+  getData:pointData,
+  getBaseline:()=>DATASETS[currentKey].markers,
+  replaceMarkers:markers=>{
+    currentMarkers=structuredClone(markers);
+    clearGroup(landmarkGroup);clearGroup(fiducialGroup);
+    addLandmarks(currentMarkers.landmarks||[],[]);addFiducials(currentMarkers.fiducials||[]);
+    landmarkEditor.load(currentKey,currentMarkers,[...landmarkGroup.children,...fiducialGroup.children],scalpGroup.children[0].geometry);
+  },
+  place:coords=>landmarkEditor.placeCoordinates(coords),
+  select:name=>{const mesh=[...landmarkGroup.children,...fiducialGroup.children].find(m=>m.userData.marker.name===name);if(mesh){landmarkEditor.select(mesh);showInfo(mesh.userData.marker);}},
+  replaceFiducials:(fiducials,patch)=>{
+    currentMarkers={...pointData(),...patch,fiducials};
+    clearGroup(fiducialGroup);addFiducials(fiducials);
+    landmarkEditor.load(currentKey,currentMarkers,[...landmarkGroup.children,...fiducialGroup.children],scalpGroup.children[0].geometry);
+  },
+  updateEeg:result=>{
+    clearGroup(eegGroup);clearGroup(arcGroup);
+    currentMarkers={...currentMarkers,...result};addEeg(currentMarkers);
+    document.getElementById("eeg-status").dataset.revision=String(Date.now());
+  },
+  previewPending:()=>{eegStale=true;eegGroup.visible=false;arcGroup.visible=false;document.getElementById("eeg-status").textContent="Recomputing EEG from edited landmarks…";},
+  previewError:message=>{eegGroup.visible=false;arcGroup.visible=false;document.getElementById("eeg-status").textContent="EEG preview unavailable: "+message;},
 });
 let pointerStart = null;
 
@@ -262,6 +303,7 @@ async function loadDataset(key) {
 
   currentSubject = ds.label || key;
   currentIsTemplate = template;
+  currentKey = key;
   distData = null;
   mcGroup.visible = template && layerState["toggle-mc"];
   for (const id of ["toggle-mc", "toggle-coil", "toggle-targets"]) {
@@ -273,13 +315,15 @@ async function loadDataset(key) {
      `MRI candidates: ${(ds.markers.fiducials || []).length}; review on MRI`,
      "Landmarks require confirmation. Cyan spheres: estimated EEG. Click points for coordinates and confidence."].join(" · ");
   const markers = structuredClone(ds.markers);
+  currentMarkers = markers;
+  document.getElementById("toggle-fiducials").closest("label").hidden=template;
   currentCoordinateLabel = markers.coordinate_frame?.template || "Subject RAS";
   addScalp(scalpGeo);
   if (skullGeo) skullGroup.add(new THREE.Mesh(skullGeo, new THREE.MeshStandardMaterial({color: 0xe9d7b3, side: THREE.DoubleSide})));
   document.getElementById("toggle-skull").disabled = !skullGeo;
   if (coilGeo) addCoil(coilGeo);
   if (template) addTargets(markers.targets || []);
-  addFiducials(markers.fiducials || []);
+  if (!template) addFiducials(markers.fiducials || []);
   addLandmarks(markers.landmarks || [], template ? markers.targets : []);
   addEeg(markers);
   landmarkEditor.load(key, markers, [...landmarkGroup.children, ...fiducialGroup.children], scalpGeo);
@@ -290,6 +334,7 @@ async function loadDataset(key) {
   hideInfo();
   restoreUiState();
   stage.dataset.subject = key;
+  review.load(key,template);
 }
 
 // tear down the previous subject. the groups themselves stay so the layer toggles
@@ -375,7 +420,7 @@ function addEeg(markers) {
   document.getElementById("eeg-status").textContent = qc?.status === "underdetermined"
     ? `EEG positions withheld: ${qc.reason}`
     : qc?.cz_coronal_gap_mm != null
-    ? "Scalp tape arcs • SMA halfway Fz–Cz. Cz cross-check gap: " + qc.cz_coronal_gap_mm.toFixed(1) + " mm. Ring cross-check: " + Math.max(...qc.temporal_ring_gap_mm).toFixed(1) + " mm."
+    ? (qc.status === "provisional_unconfirmed_anchors" ? "PROVISIONAL — confirm all four anchors. " : qc.status === "underdetermined_arc_disagreement" ? "UNDERDETERMINED — arc disagreement. " : "") + "Scalp tape arcs • SMA halfway Fz–Cz. Cz cross-check gap: " + qc.cz_coronal_gap_mm.toFixed(1) + " mm. Ring cross-check: " + Math.max(...qc.temporal_ring_gap_mm).toFixed(1) + " mm."
     : "Run the pipeline to generate EEG electrodes for this subject.";
 }
 
@@ -1112,6 +1157,7 @@ function onClick(event) {
 }
 
 function showInfo(m) {
+  review?.focus(m.position);
   const info = document.getElementById("info");
   info.replaceChildren();
   const title = document.createElement("h2"); title.textContent = m.label; info.appendChild(title);
@@ -1262,9 +1308,11 @@ function bindUI() {
 
 function animate() {
   requestAnimationFrame(animate);
-  controls.update();
-  renderer.render(scene, camera);
-  labelRenderer.render(scene, camera);
+  if (!stage.classList.contains('mri-active')) {
+    controls.update();
+    renderer.render(scene, camera);
+    labelRenderer.render(scene, camera);
+  }
 }
 
 bindUI();

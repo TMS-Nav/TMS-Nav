@@ -34,8 +34,14 @@ Maintain repository-level continuity across Codex sessions.
 ### Safety and Git
 - Never store credentials, tokens, passwords, or private
   subject information in checkpoint documents.
-- Commit and push whenever significant progress has been made
+- Commit with message starting with "[codex]" and push whenever significant progress has been made
 - Do not overwrite or discard unrelated changes.
 - Do not claim a task or test succeeded without verification.
 - When multiple agents work concurrently, avoid conflicting
   edits to shared checkpoint documents.
+
+### Documentation
+- Maintain concise long-term documentation of architecture, features, and usage.
+- Update existing guides rather than adding overlapping documents; keep usage out of task reports.
+- For each requested task, create or update a relevant `*-report.md` with the latest changes, verified results, and remaining issues.
+- Prefer bullets, tables, commands, and useful figures over long paragraphs.

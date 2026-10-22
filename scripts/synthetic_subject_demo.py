@@ -13,12 +13,13 @@ from src.synthetic_subject import make_phantom
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--subject', default='synthetic-demo')
+    parser.add_argument('--five', action='store_true', help='Five cap markers with unequal intensities')
     args = parser.parse_args()
     validate_id(args.subject)
     folder = INPUT_ROOT / args.subject
     if (folder / 'T1w.nii.gz').exists():
         parser.error('Demo input exists; choose a new --subject rather than overwrite input')
-    path, truth = make_phantom(folder)
+    path, truth = make_phantom(folder, five=args.five)
     corrections = dict(subject=args.subject, axes='RAS', units='mm', source_sha256=truth['source_sha256'],
                        coordinate_frame=dict(name='subject_RAS'), fiducials=[],
                        landmarks=[dict(name=name, label=label, position=truth['landmarks_ras_mm'][label])

@@ -26,7 +26,7 @@ test('MNI default, subject overlays, corrections and return to MNI', async ({pag
   await page.locator('#landmark-x').fill(String(previous+1));
   await page.getByRole('button',{name:'Apply coordinates',exact:true}).click();
   await expect(page.locator('#info')).toContainText('manually_confirmed');
-  await expect(page.locator('#eeg-status')).toContainText('Points edited');
+  await expect(page.locator('#eeg-status')).toContainText('Scalp tape arcs');
   const downloadPromise=page.waitForEvent('download');
   await page.locator('#landmark-export').click();
   const download=await downloadPromise;

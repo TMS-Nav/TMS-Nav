@@ -1,59 +1,40 @@
 # Codex state
 
-Updated: 2026-10-21
+Updated: 2026-10-22
 
 ## Current objective
-
-Deliver and commit/push the subject-specific MRI reconstruction pipeline and
-initialize persistent repository handoff according to AGENTS.md.
+- Deliver native MRI inspection, five-marker review and live EEG updates; commit/push with `[codex]` prefix.
 
 ## Completed work
-
-- Native T1w subject ingestion CLI/API, default dedicated input folders, cached
-  derivatives, confidence/QC, saved manual corrections and explicit affine provenance.
-- Bright superficial fiducial candidates, scalp reconstruction, optional external
-  skull mask, landmark confirmation and subject-specific EEG scalp constructions.
-- Viewer subject overlays, selection/edit/export, MNI default and subject views
-  without Monte Carlo samples. Synthetic demo and reproducible registration/tests.
-- Environment specification, dependency snapshot, usage guide, delivery report
-  and explicitly synthetic QC figures. See docs/subject-reconstruction.md and
-  docs/subject-reconstruction-report.md.
+- NiiVue anatomical slice tab: linked planes, sliders, crosshair, intensity, contrast, zoom and overlays.
+- Subject candidate review: bright/local detection, rejection diagnostics, physical filters, touching-peak split, manual add/confirm/exclude and undo.
+- Loopback Python API and `run_viewer.py`; cached EEG previews, provisional confidence, correction saving/reopening and registration reuse.
+- MNI pink fiducials hidden; existing MNI and subject visualization retained.
+- Existing usage guide consolidated; existing report describes latest changes with synthetic figures. AGENTS.md documentation policy added; user's staged commit-prefix rule preserved.
 
 ## Verified results
+- Python: `micromamba run -n tms312 python -m pytest tests/ -q` → **75 passed**.
+- Viewer: `npm test` → **8 passed**; `npm run test:browser` → **2 passed**; production build passed.
+- Actual browser save/reopen, five unequal markers, cached live cap, native coordinates and registration reuse covered.
+- `pip check` and `git diff --check` passed. Main matched fetched origin/main at base **07fe146** before commit.
 
-- Implementation verification in this thread: 66 Python tests, 8 JavaScript tests,
-  1 Chromium/WebGL integration test and production viewer build passed.
-- Actual browser-exported correction successfully applied through Python;
-  repeated ingestion reused its cache. pip check passed.
-- Commit preparation: git diff --check passed; browser last-run artifact reports
-  passed. Tests were not rerun for this documentation/commit-only handoff.
-- Branch: main. Before commit, HEAD and fetched origin/main matched at b1ef3ab.
-
-## Decisions and assumptions
-
-- Primary coordinates are native anatomical RAS mm; MNI values are secondary.
-- Marker scores are uncalibrated candidate scores. No real subject MRI was available.
-- Confirm the four anatomical anchors before EEG construction; do not fabricate
-  identities or skull geometry. Skull requires a separately validated mask.
-- Inputs/derivatives remain Git-ignored. Tracked figures contain synthetic data only.
+## Decisions / assumptions
+- Restricted subject scans must not be searched for or accessed. User explicitly confirmed the restriction; all validation/figures use synthetic data.
+- Five is a QC expectation, not a detection quota. LiquiMark 8 mm profile is an unvalidated starting point.
+- Native RAS mm remains primary. Cap-marker centers keep their offset above scalp.
+- Usable unconfirmed anchors allow labeled provisional live EEG; saved CLI output still requires confirmed anchors.
+- Browser saves avoid Parcel reloads; API reopening reads current derivatives. Full viewer startup refreshes static exports.
 
 ## Uncommitted changes
+- Task implementation, tests, existing documentation/figures and checkpoint updates are included together in the delivery commit; verify `git status` at session start.
+- Inputs, derivatives and browser artifacts remain ignored. No private scan or subject information is included in checkpoints or figures.
 
-The completed implementation, AGENTS.md and these new checkpoint documents are
-included together in the delivery commit. Check git status at the next session;
-local MRI caches, viewer data and test outputs intentionally remain ignored.
-
-## Remaining blockers / limitations
-
-No blocker to delivery. Real-acquisition validation remains outstanding. Detection
-supports bright compact superficial candidates; registration is affine and needs
-visual review. Browser corrections require JSON export and CLI recomputation.
-Existing gh-pages dependency audit findings are documented in the delivery report.
+## Remaining blockers / limits
+- No implementation blocker. Acquisition-specific detection accuracy is unverified by user restriction.
+- Existing gh-pages audit findings remain; software-WebGL initial shader setup can be slow.
 
 ## Specific next actions
-
-1. Verify the delivery commit and origin/main synchronization with git status -sb
-   and git log -1; do not assume remote state from this checkpoint alone.
-2. For real data, follow docs/subject-reconstruction.md; review marker/landmark QC
-   and confirm anchors before interpreting electrode estimates.
-3. Run ingestion serially because viewer exports share a generated registry.
+1. Verify the task commit and remote synchronization using Git rather than assuming checkpoint state.
+2. Use `docs/subject-reconstruction.md` for local review; `docs/subject-reconstruction-report.md` for latest changes/results.
+3. Launch `micromamba run -n tms312 python run_viewer.py`. Review each expected marker locally, confirm four anchors, then save reviewed changes.
+4. Do not request or search for the restricted scan in future sessions.

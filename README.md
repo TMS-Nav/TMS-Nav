@@ -9,7 +9,7 @@ The MNI demo and simulated placements are for development and illustration.
 Template targets are anatomical approximations, not individualized fMRI targets.
 Individual subjects use a separate cached reconstruction pipeline with reviewable
 MRI fiducial candidates, native scalp meshes, manual landmark confirmation and
-subject-specific EEG estimates. See the [complete subject workflow](docs/subject-reconstruction.md)
+subject-specific EEG estimates, linked anatomical MRI slices and live landmark previews. See the [complete subject workflow](docs/subject-reconstruction.md)
 and [verification report](docs/subject-reconstruction-report.md).
 
 ## Quick start
@@ -27,9 +27,8 @@ python run_pipeline.py --template
 python ingest_subject.py sub-001 /path/to/native_T1w.nii.gz
 # Or: python ingest_subject.py sub-001
 # reads saves/subjects/sub-001/T1w.nii.gz and optional corrections/transforms
-cd viewer
-npm ci
-npm run dev
+npm --prefix viewer ci
+python run_viewer.py
 ```
 
 Python 3.12 and Node 22 were verified in `tms312`. The environment file includes a
@@ -181,9 +180,11 @@ Direction buttons take a step in the local tangent plane and project back onto
 the scalp triangles. The step is a tangent displacement, not a geodesic distance.
 **Reset selected** restores the pipeline position. Edits are kept per dataset in
 browser storage when available; **Export JSON** downloads them with frame metadata.
-For reconstructed subjects, save the exported file as
-`saves/subjects/<ID>/corrections.json` and rerun `python ingest_subject.py <ID>` to
-apply corrections and recompute EEG positions. Original input files stay unchanged.
+For interactive subject review, launch `python run_viewer.py`: the Anatomical MRI
+tab supports linked slices and point placement; landmark edits recompute EEG on the
+cached scalp. **Save reviewed changes** persists corrections and derivatives.
+Without the local API, save exported JSON as `saves/subjects/<ID>/corrections.json`
+and rerun `python ingest_subject.py <ID>`. Original input files stay unchanged.
 Template edits do not recompute Monte Carlo registration/statistics. Changed source
 landmark exports invalidate saved browser edits.
 
@@ -312,8 +313,8 @@ EEG fields continue to load.
 The cyan EEG cap is separate from the existing approximate MRI target markers and
 Monte Carlo results. These five targets are fixed-direction scalp placeholders,
 not anatomically selected Brainsight targets; see the [target-definition audit](docs/target-definitions.md).
-Browser point edits hide the cap until saved corrections are applied by subject
-ingestion. Unconfirmed subject anchors withhold the cap rather than assign precise
-positions. Subject views do not display Monte Carlo dots or template target placeholders.
+With `run_viewer.py`, landmark edits update the cap after a short pause; usable
+unconfirmed anchors show a labeled provisional preview. Static ingestion withholds
+EEG until the four anchors are confirmed. Fiducial-only edits preserve the cap. Subject views do not display Monte Carlo dots or template target placeholders.
 
 Marking reference: [Seeck et al., IFCN standardized electrode array (2017)](https://doi.org/10.1016/j.clinph.2017.06.254).

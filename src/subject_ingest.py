@@ -3,7 +3,6 @@
 All mesh vertices and primary points are native anatomical RAS millimeters.
 """
 import csv
-import hashlib
 import importlib.metadata
 import json
 import os
@@ -19,7 +18,7 @@ from scipy import ndimage
 
 from src.eeg_cap import eeg_cap
 from src.export_web import _marker_json, web_mesh, write_registry
-from src.fiducials import detect_markers
+from src.fiducials import detect_markers, detection_signature
 from src.head_surface import scalp_surface
 from src.mri_inputs import ROOT
 from src.skull_boundary import head_mask
@@ -83,10 +82,11 @@ def apply_corrections(payload, path, source_sha256):
         raise ValueError('Corrections create duplicate landmark labels')
 
 
-def infer_electrodes(surface, payload):
+def infer_electrodes(surface, payload, *, preview=False):
     anchors = {m['label']: m for m in payload['landmarks']}
     required = ('Nz', 'Iz', 'LPA', 'RPA')
-    if not all(k in anchors and anchors[k]['status'] == 'manually_confirmed' for k in required):
+    confirmed = all(k in anchors and anchors[k]['status'] == 'manually_confirmed' for k in required)
+    if not all(k in anchors for k in required) or (not confirmed and not preview):
         payload['eeg_qc'] = dict(status='underdetermined', reason='Confirm Nz, Iz, LPA and RPA before constructing EEG sites')
         return
     points = {k: np.asarray(anchors[k]['position']) for k in required}
@@ -102,10 +102,11 @@ def infer_electrodes(surface, payload):
     try:
         electrodes, arcs, qc = eeg_cap(surface, targets)
         gap = float(qc['cz_coronal_gap_mm'])
-        status = 'estimated_from_confirmed_anchors' if gap <= 10 else 'underdetermined_arc_disagreement'
+        status = ('estimated_from_confirmed_anchors' if confirmed else 'provisional_unconfirmed_anchors') if gap <= 10 else 'underdetermined_arc_disagreement'
         payload['electrodes'] = [{**_marker_json(m), 'category': 'electrode',
                                   'method': 'subject_scalp_arc_lengths', 'status': status,
-                                  'confidence': .65 if gap <= 10 else .2,
+                                  'confidence': min(.65 if gap <= 10 else .2,
+                                      min(anchors[k].get('confidence', .2) for k in required)),
                                   'confidence_type': 'uncalibrated_construction_score'} for m in electrodes]
         payload['eeg_arcs'] = arcs
         payload['eeg_qc'] = {**qc, 'status': status, 'review_required': True}
@@ -153,7 +154,7 @@ def _export_viewer(subject, output, viewer_root):
 def ingest_subject(subject, anatomical=None, *, input_root=INPUT_ROOT,
                    derivative_root=DERIVATIVE_ROOT, viewer_root=VIEWER_ROOT,
                    corrections=None, transform=None, register_to=None, skull_mask=None,
-                   marker_threshold=None, force=False):
+                   marker_threshold=None, detector_options=None, force=False):
     """Process a subject and expose its cache to the viewer; never edit inputs."""
     validate_id(subject)
     folder = Path(input_root) / subject
@@ -167,9 +168,16 @@ def ingest_subject(subject, anatomical=None, *, input_root=INPUT_ROOT,
     transform = transform or (folder / 'native_to_mni.json' if (folder / 'native_to_mni.json').exists() else None)
     if transform and register_to:
         raise ValueError('Choose either an existing transform or --register-to')
+    detector_file = folder / 'detector.json'
+    if detector_options is None and detector_file.exists():
+        saved_detector = json.loads(detector_file.read_text())
+        detector_options = saved_detector.get('options', {})
+        if marker_threshold is None:
+            marker_threshold = saved_detector.get('threshold')
+    detector_options = detector_options or {}
     paths = dict(anatomical=anatomical, corrections=corrections, transform=transform,
                  reference=register_to, skull_mask=skull_mask)
-    fingerprint = _fingerprint(paths, dict(marker_threshold=marker_threshold))
+    fingerprint = _fingerprint(paths, dict(marker_threshold=marker_threshold, detector_options=detector_options))
     output = Path(derivative_root) / subject
     output.parent.mkdir(parents=True, exist_ok=True)
     lock = output.parent / f'.{subject}.lock'
@@ -193,7 +201,7 @@ def ingest_subject(subject, anatomical=None, *, input_root=INPUT_ROOT,
         surface = scalp_surface(volume, affine, mask=mask, smooth_sigma=1., wipe=info.wipe)
         if not surface.n_cells:
             raise ValueError('Scalp reconstruction produced an empty mesh')
-        fiducials, detection = detect_markers(volume, affine, mask, marker_threshold)
+        fiducials, detection = detect_markers(volume, affine, mask, marker_threshold, **detector_options)
         # Old landmark heuristics expect a centered midline; remove translation only.
         centered = surface.copy()
         origin = (np.min(surface.points, axis=0) + np.max(surface.points, axis=0)) / 2
@@ -222,10 +230,12 @@ def ingest_subject(subject, anatomical=None, *, input_root=INPUT_ROOT,
                        'surface_bounds_ras_mm': list(surface.bounds),
                        'surface_closed': bool(surface.n_open_edges == 0),
                        'orientation': 'outward_checked', 'anatomical_axes_assumption': 'Head approximately aligned to RAS anatomical axes; tilt requires manual review'})
-        identity = dict(threshold=detection['threshold'], candidates=[
-            dict(name=m['name'], position=np.round(m['position'], 3).tolist()) for m in fiducials])
-        payload['detection_signature'] = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+        payload['detection_signature'] = detection_signature(fiducials, detection)
         apply_corrections(payload, corrections, payload['source_sha256'])
+        detection['active_candidates_after_review'] = len(payload['fiducials'])
+        detection['confirmed_count'] = sum(m['status'] == 'manually_confirmed' for m in payload['fiducials'])
+        detection['review_complete'] = (detection['confirmed_count'] == detection['expected_count']
+                                         and len(payload['fiducials']) == detection['expected_count'])
         for category in ('landmarks', 'fiducials'):
             for point in payload[category]:
                 ijk = apply_affine(np.linalg.inv(affine), point['position'])

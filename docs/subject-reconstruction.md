@@ -1,288 +1,177 @@
-# Subject-specific MRI reconstruction
+# Subject MRI reconstruction and review
 
-`ingest_subject.py` accepts a subject ID and a native anatomical T1w NIfTI. It
-reconstructs the outer scalp, detects supported bright marker candidates, proposes
-reviewable anatomical landmarks, and exports cached subject derivatives to the
-existing viewer. No functional MRI is needed. The reusable Python entry point is
-`src.subject_ingest.ingest_subject`; it has no browser dependency.
+## What is available
 
-## Setup and complete workflow
+| Component | Purpose |
+|---|---|
+| `ingest_subject.py` / `src.subject_ingest` | Native T1w → cached surfaces, marker candidates, coordinates, confidence and QC |
+| `run_viewer.py` / `src.viewer_service` | Local MRI access, detector previews, cached EEG recomputation and correction saving |
+| Three.js **3D head** tab | Scalp/skull, subject fiducials, anatomical landmarks, EEG electrodes and arcs |
+| NiiVue **Anatomical MRI** tab | Linked axial/coronal/sagittal slices, crosshairs, contrast, zoom and point placement |
+| MNI demo | Default subject; existing targets/Monte Carlo preserved; pink fiducials hidden |
 
-Run from the repository root. Python 3.12 and Node 22 are compatible and were
-installed in the user-local micromamba environment `tms312`.
+**Primary coordinates: native RAS millimeters.** Pink markers are MRI candidates;
+yellow landmarks define the EEG construction; cyan electrodes are estimates.
+The five cap markers and four anatomical anchors are separate point sets.
+
+## Setup and launch
+
+From the repository root:
 
 ```bash
-micromamba create -y -f environment.yml
-# For Bash, initialize activation for this shell if needed:
+micromamba create -y -f environment.yml        # first setup only
+# Alternative to activation: prefix commands with micromamba run -n tms312
 eval "$(micromamba shell hook --shell bash)"
 micromamba activate tms312
-cd viewer
-npm ci
-cd ..
-# Generate/cache the MNI demo once so it remains the default viewer selection.
-python run_pipeline.py --template
-# Single subject ingestion command:
-python ingest_subject.py sub-001 /absolute/path/to/native_T1w.nii.gz
-cd viewer
-npm run dev
+npm --prefix viewer ci
+python run_pipeline.py --template             # generate/cache MNI once
+python ingest_subject.py sub-001 /path/to/native_T1w.nii.gz
+python run_viewer.py
 ```
 
-Open <http://localhost:1234>. Select `sub-001`. MNI152 stays the default whenever
-its generated assets exist; the first available subject is the fallback if no
-MNI assets have been generated. The viewer retains all processed subjects. Adding
-subjects requires no source changes. Parcel watches the regenerated static
-registry during development; rebuild with `npm run build` for a production build.
-Nothing is deployed automatically.
+- Open <http://127.0.0.1:1234>; select the subject.
+- `run_viewer.py` starts Parcel and a loopback-only API on port **8765**. Ctrl-C stops both.
+- `python run_viewer.py --api-only` supports an already-running Parcel viewer.
+- `npm --prefix viewer run dev` alone retains static 3D viewing; MRI/live previews/save require the API.
+- On launch, saved derivatives refresh the static viewer exports. Nothing is deployed automatically.
+- Python 3.12 / Node 22; exact Python versions: `requirements-tms312-lock.txt`.
+- `alsa-lib` in `environment.yml` supplies Linux Chromium support; omit it on other platforms.
+- SimNIBS remains a separate optional environment; see `efield/README.md`.
 
-Activation is optional: prefix any command with `micromamba run -n tms312`.
-`environment.yml` includes `alsa-lib` for Linux browser tests; omit that package
-on other platforms. `requirements-tms312-lock.txt` records the Python package
-versions used for delivery. To reproduce those exact versions, create the Python
-3.12/Node 22 environment, then `python -m pip install -r requirements-tms312-lock.txt`.
-SimNIBS remains an optional external application with its own interpreter, as
-specified in the existing electric-field workflow.
-
-Prefer this dedicated project layout:
+Default inputs:
 
 ```text
 saves/subjects/sub-001/
-  T1w.nii.gz                # user-supplied native structural scan
-  corrections.json          # optional; automatically used
-  native_to_mni.json        # optional; automatically used
+  T1w.nii.gz                 # or T1w.nii, exactly one
+  corrections.json           # reviewed locations; auto-read
+  detector.json              # saved detector settings; auto-read
+  native_to_mni.json          # optional compatible physical affine
 ```
 
-Then just run `python ingest_subject.py sub-001`. Exactly one of `T1w.nii.gz` and
-`T1w.nii` must exist. Alternate paths remain supported. All defaults are anchored
-to the repository even if invoked from another directory. IDs use letters,
-numbers, `.`, `_`, `-`, beginning with a letter/number; `MNI152` is reserved.
-Automatic discovery within `saves/subjects/` selects only `T1w.nii[.gz]`, so
-optional skull masks are not ingested as additional subjects.
-Legacy `run_pipeline.py <scan-or-folder>` now routes non-template scans through
-this ingestion module, using its existing generated dataset keys. The explicit
-subject command above gives stable IDs and picks up the dedicated corrections.
+Then use `python ingest_subject.py sub-001`. Explicit external anatomical paths
+remain supported. Dedicated-folder discovery selects only `T1w.nii[.gz]`, excluding
+optional masks. Legacy `run_pipeline.py <scan-or-folder>` uses its existing dataset keys.
 
-## What is measured, inferred, or unavailable
+## Debug missing cap markers
 
-| Output | Method | Confidence / limits |
-| --- | --- | --- |
-| Scalp | Existing physical-distance head mask, contour and Taubin smoothing | Outer soft-tissue boundary; threshold/morphology dependent. Review cropping, hair, defacing and mask contour. |
-| MRI fiducials | Bright connected components, volume 8–800 mm³, compactness and proximity to scalp, intensity-weighted centers | Candidate detection, no assumed marker count. Scores are uncalibrated morphology/contrast scores, capped at 0.85. False positives and negatives remain possible. |
-| Landmarks | Centered scalp profile heuristics for Nz, Iz, LPA and RPA | Automatically flagged `underdetermined`, score 0.2. No claim of precise anatomical localization. Confirm on MRI before use. |
-| EEG 10–20 | Existing connected scalp-plane arc lengths from confirmed Nz/Iz/LPA/RPA | Withheld until all four anchors are manually confirmed. Estimated geometry, not MRI detections or functional targets. Cz disagreement above 10 mm flags underdetermination. |
-| Skull | Optional externally validated native binary skull mask, outer boundary | T1 alone does not reliably identify bone. No skull is fabricated by eroding the scalp. Skull layer is disabled without an actual mesh. |
+1. Open **Anatomical MRI**. Locate each expected marker in all three planes; inspect intensity and RAS coordinates.
+2. Select a candidate row to center the slices. Enable **Fiducials / landmarks** only when needed; anatomy-only is the default.
+3. Inspect the candidate table and `markers.json → detection_qc`: measured volume, elongation, scalp distance/depth and rejection reasons.
+4. Adjust filters and click **Preview detection**. **Undo detection preview** restores the previous candidates/review edits.
+5. **Include** a rejected candidate, or **Add fiducial at crosshair** for a missed center. Select it and use **Place selected point at crosshair** to refine it.
+6. **Confirm** each MRI-supported center; **Exclude** artifacts. Review progress shows confirmed/expected and total active candidates.
+7. Click **Save reviewed changes**. Corrections/settings and derivatives are saved locally; existing anatomical input files remain unchanged.
 
-Detection supports **bright, compact, superficial** markers. It does not reliably
-support dark markers, arbitrary capsule shapes, markers deep inside tissue,
-touching components, severe intensity bias or unknown acquisition protocols.
-Fat, vessels and artifacts can resemble candidates. No real subject scan was
-available for validation in this checkout. Zero detections means no supported
-candidates were found, not that the subject has no markers. Review every candidate
-in its three actual MRI slices (`qc_fid-*.png`); anchor slices are available as
-`qc_landmark-*.png`. Adjust the original-intensity
-threshold explicitly if needed:
+| Setting / diagnostic | Interpretation |
+|---|---|
+| Brightness | Global cutoff in original image intensity units |
+| Local contrast | Difference of 0.6/3 mm Gaussian responses; threshold has different units |
+| Blank threshold | Automatically estimate a cutoff for the selected method |
+| Min/max volume | Physical segmented component volume; not the nominal package diameter |
+| Elongation | Covariance ratio including finite voxel dimensions; helps avoid rejecting faint one-plane components |
+| Max depth / outside | Relative to the head mask; cap markers can sit above skin or be included in the mask |
+| Separate touching peaks | Optional subdivision of connected components with distinct intensity peaks; review results |
+| Expected count | Default **5**, a QC expectation; never creates detections or selects a forced top five |
+| Diagnostic limit | Up to 5,000 component rows; omitted rows are counted explicitly |
+
+**LiquiMark 8 mm starting profile:** local contrast, 8–800 mm³, elongation ≤8,
+head-mask depth ≤8 mm, outside distance ≤25 mm, expected count 5. This is an
+unvalidated starting configuration for review, not an acquisition-specific calibration.
+An 8 mm round marker's visible signal need not form an 8 mm sphere.
+
+Offline brightness adjustment is also available:
 
 ```bash
-python ingest_subject.py sub-001 --marker-threshold 750
+python ingest_subject.py sub-001 --marker-threshold 750  # example intensity, not universal
 ```
 
-Positions are not automatically assigned protocol/electrode identities from an
-unknown cap arrangement. A unique confirmed landmark or usable electrode within
-8 mm yields a **suggested** label requiring confirmation. Ambiguous candidates
-stay unlabeled. Manual corrections can set `anatomical_label`, and can add missed
-fiducials or exclude false positives. Anatomical heuristics assume the head is
-approximately aligned to anatomical RAS directions; large head tilt and absent
-facial/ear anatomy require manual correction.
+Changing detection can renumber candidates. Existing fiducial edits/exclusions
+require a matching `detection_signature`; re-review when it changes.
+Markers remain at their measured cap centers. **Do not snap cap centers to skin**;
+scalp contacts are a different geometric quantity.
 
-Supply a validated skull segmentation if available:
+## Landmarks and live EEG
+
+- Adjust **Nz (nasion), Iz (inion), LPA, RPA** using the editor, scalp picking, or MRI crosshairs.
+- Anatomical placements from MRI are projected to scalp; fiducial placements keep their cap offset.
+- After a 300 ms editing pause, the API recomputes electrodes/arcs on the cached full scalp. MRI segmentation and detection do not rerun for previews.
+- Pending/invalid constructions hide stale arcs and explain the reason. Late responses from earlier edits/subjects are ignored.
+- Usable unconfirmed anchors permit a **PROVISIONAL** preview with limited confidence. Confirm all four for a reviewed-anchor construction.
+- Static CLI derivatives withhold EEG until the four anchors are confirmed. Live previews do not silently confirm anchors.
+- Fiducial-only edits do not invalidate the landmark-based EEG cap. Five confirmed fiducials are a separate review milestone.
+- **Save reviewed changes** persists confirmed points, exclusions and settings; explicit save rebuilds derivatives and reuses an existing registration.
+- API-enabled reopening reads saved derivatives immediately. Static exports refresh on the next full `run_viewer.py` launch or CLI ingestion.
+
+Manual/export fallback:
+
+- **Export JSON** retains edits if the local API is unavailable.
+- Save it as `saves/subjects/ID/corrections.json`; rerun ingestion and reload.
+- Required metadata: subject ID, exact native `source_sha256`, `axes: RAS`, `units: mm`, `coordinate_frame.name: subject_RAS`.
+- Detected-fiducial edits additionally carry `detection_signature`.
+- `landmarks`: entries with `name`, `label`, `position`; `fiducials`: coordinate entries, optional `anatomical_label`, or `{name, exclude: true}`.
+- New manual fiducials use unique names. Retain earlier confirmations you intend to keep.
+- `corrections_template.json` is for review, not silently applied. Supplied entries count as human confirmation.
+
+## Coordinates, registration and skull
+
+| Contract | Behavior |
+|---|---|
+| Native NIfTI | 3D, finite nonconstant T1w, explicit spatial units and consistent coded qform/sform |
+| Affines | Reflected/oblique orthogonal grids supported; meter/micron units converted to mm |
+| Rejected inputs | Ambiguous headers, sheared grids, 4D images and template-coded native inputs |
+| MRI display | Local API normalizes served header units to mm without changing original files or resampling voxels |
+| Scalp | Outer soft-tissue surface; review head-mask QC, hair, cropping and defacing |
+| Skull | Separate mesh only from a validated binary native-grid mask; no scalp erosion presented as bone |
+| Confidence | Detection/construction scores are uncalibrated; human score 1 means confirmed, not a probability |
 
 ```bash
 python ingest_subject.py sub-001 --skull-mask /path/to/native_binary_skull.nii.gz
+python ingest_subject.py sub-001 --transform /path/to/physical_affine.json
+python ingest_subject.py sub-001 --register-to /path/to/full_head_MNI_T1w.nii.gz
 ```
 
-The mask must be binary, share the T1 shape/affine, and lie at least 98% inside the
-head mask. This checks grid alignment/containment, not the correctness of tissue
-segmentation. A filled shell is contoured to recover its outer surface; the scalp
-and skull remain separate meshes and separate viewer controls.
+- Skull masks must share shape/affine and lie ≥98% inside the head mask; this checks alignment, not tissue accuracy.
+- Affine JSON requires `source_sha256`, `target_sha256`, `target_name`, `units: mm`, `axes: RAS|LPS`, `direction: native_to_MNI|MNI_to_native`, and an invertible 4×4 `matrix`.
+- Optional `reference_path` is hash-checked when available. Source hash must match exactly.
+- LPS conversion uses `diag(-1,-1,1,1)` on both sides; reverse-direction matrices are inverted.
+- Raw FSL/ITK/ANTs matrices and nonlinear warps require explicit external conversion; do not paste ambiguous numeric parameters.
+- Optional registration: SimpleITK affine T1w correlation, 4/2/1 levels, 2/1/0 mm smoothing, seed 1729, one thread. Fixed-MNI → moving-native LPS is inverted for native → MNI RAS points.
+- Review `qc_registration.png` and `T1w_in_MNI.nii.gz`; arithmetic round trips do not prove anatomical accuracy.
 
-## Physical coordinates and transforms
+References: [NiBabel coordinates](https://nipy.org/nibabel/coordinate_systems.html),
+[SimpleITK registration direction](https://simpleitk.readthedocs.io/en/latest/registrationOverview.html),
+[NiiVue MRI controls](https://niivue.com/docs/api/niivue/classes/Niivue/).
 
-Primary point coordinates and every mesh vertex are **native anatomical RAS mm**:
-X right, Y anterior, Z superior. No recentering or display-only rotation is applied
-to exported meshes. NiBabel's affine maps voxel centers to RAS; see its
-[coordinate documentation](https://nipy.org/nibabel/coordinate_systems.html).
-Reflected and oblique orthogonal affines are supported. Meter/micron NIfTI units
-are converted to mm. Coded qform/sform conflicts, unknown spatial units, singular
-matrices, sheared voxel grids, 4D scans and template-coded native inputs are
-rejected explicitly. Resolve the header or resample externally rather than
-silently guessing. The code cannot determine whether an arbitrary intensity
-volume is truly T1-weighted; supply the correct anatomical contrast.
+## Outputs, caching and scope
 
-An unregistered subject is fully usable in native space. To reuse a compatible
-existing affine, supply `--transform transform.json` or place it in the dedicated
-subject folder. The JSON contract is intentionally explicit:
+| Location | Contents |
+|---|---|
+| `saves/derivatives/subjects/ID/` | `markers.json`, `coordinates.tsv`, `qc.json`, `manifest.json`, `transforms.json` |
+| Same derivative folder | Full `.vtp` and viewer `.ply` scalp; optional skull; native `head_mask.nii.gz` |
+| Same derivative folder | `qc_projection.png`, actual `qc_fid-*.png` and `qc_landmark-*.png`, correction template/applied input |
+| Registration outputs | Resampled T1w, MNI-to-native LPS transform and overlay QC |
+| `viewer/src/data/ID/` | Local static mesh/marker exports; no anatomical volume bundled |
 
-```json
-{
-  "source_sha256": "SHA256_OF_THE_EXACT_NATIVE_NIFTI_FILE",
-  "target_sha256": "SHA256_OF_THE_EXACT_REFERENCE_NIFTI_FILE",
-  "target_name": "MNI152NLin2009aSym",
-  "reference_path": "/optional/path/to/reference.nii.gz",
-  "axes": "RAS",
-  "units": "mm",
-  "direction": "native_to_MNI",
-  "matrix": [[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]]
-}
-```
+- Content/options/relevant-code/software hashes and output checksums govern reuse; `--force` rebuilds.
+- Writer locks and staged derivatives preserve complete outputs on failure. Remove stale locks only after confirming ingestion stopped; recover `.ID-previous` after interrupted replacement.
+- Run ingestion serially; viewer exports share a generated registry. Removing input files does not remove old exports.
+- Inputs, derivatives and static subject data are Git-ignored; public deployment allowlisting remains active.
+- Detection can miss dark/merged/low-contrast markers or accept fat/artifacts. Large tilt, absent anatomy and poor surfaces require manual review.
+- Restricted scans stay local. Synthetic tests do not establish accuracy on a real acquisition.
 
-The matrix above illustrates the format; **it is not a subject registration**.
-Calculate hashes with `sha256sum <file>` (or Python `file_hash`). Both `RAS` and
-`LPS` conventions and both `native_to_MNI` and `MNI_to_native` directions are
-supported. LPS is converted by `diag(-1,-1,1,1)` on both sides; reverse-direction
-matrices are inverted. The source hash must match. If `reference_path` exists,
-its hash is checked too; otherwise the target identity is recorded as supplied
-and cannot be independently verified. FSL voxel/scaled-voxel `.mat`, arbitrary
-ITK/ANTs files and nonlinear warps are **not** accepted as ambiguous raw matrices.
-Convert them to this physical-coordinate contract with their image geometry and
-direction established first. Do not copy their numeric parameters blindly.
-
-Without an existing compatible transform, a reproducible affine registration is
-available using an explicit full-head MNI T1 reference:
+## Reproducible checks
 
 ```bash
-python ingest_subject.py sub-001 --register-to \
-  saves/templates/icbm152_2009/mni_icbm152_nlin_sym_09a/mni_icbm152_t1_tal_nlin_sym_09a.nii.gz
-```
-
-This uses SimpleITK T1w correlation, physical optimizer scales, 4/2/1 resolution
-levels, 2/1/0 mm smoothing, 15% sampling with seed 1729 and one thread. The affine
-initialization aligns image geometry; this is not nonlinear normalization.
-SimpleITK estimates **fixed MNI → moving native LPS**, so the code inverts and
-converts it to **native → MNI RAS** for point coordinates, following the official
-[registration direction convention](https://simpleitk.readthedocs.io/en/latest/registrationOverview.html).
-Round-trip checks establish arithmetic consistency, not anatomical accuracy.
-Review `qc_registration.png` and `T1w_in_MNI.nii.gz`; all registration outputs
-remain flagged for visual review. A plausible determinant is not proof of a good
-registration. Severe cropping, defacing and large rotations can defeat alignment.
-
-`transforms.json` records normalized forward/inverse matrices, source/reference
-hashes, imported-transform hash or registration settings, and review status.
-Registration also retains `MNI_to_native_LPS.tfm` as the resampling transform.
-Copy the normalized `transforms.json` to `saves/subjects/sub-001/native_to_mni.json`
-to reuse a computed transform. Primary coordinates stay native; `mni_position`
-fields are secondary values, shown on point selection when available.
-
-## Manual correction and confirmation
-
-1. Select a subject. Yellow cubes are anatomical landmarks, pink diamonds are
-   MRI fiducials, cyan spheres are scalp electrode estimates. Each category has
-   an independent layer checkbox, labels, click selection and coordinate inspection.
-2. Choose a landmark/fiducial in the editor or click it. Enter native RAS mm
-   coordinates, apply them, or use **Pick on scalp**. For a marker center outside
-   skin, uncheck **constrain entries to scalp**; snapping would move it off its
-   measured center. Confirm a correct anchor by applying its coordinates unchanged.
-3. Edits persist per subject in browser storage and hide the old EEG overlay until
-   recomputation. **Reset selected** restores its exported position/status.
-4. **Export JSON** downloads source-bound corrections. It includes manually
-   confirmed anchors and edited candidates, not unreviewed heuristic anchors.
-   Save it as `saves/subjects/sub-001/corrections.json`, then rerun
-   `python ingest_subject.py sub-001`. The CLI cannot read browser storage directly.
-5. Reload the viewer after ingestion. The saved correction provenance and revised
-   electrodes now come from the subject derivatives.
-
-You can instead edit the derivative `corrections_template.json`, review its
-coordinates against slice QC, and save the reviewed entries in the dedicated
-input folder. Remove any entries you have not confirmed: entries supplied in a
-correction file count as human confirmation. Required metadata is subject ID,
-`source_sha256`, `axes: RAS`, `units: mm`, and
-`coordinate_frame: {"name":"subject_RAS"}`. Editing or excluding detected fiducials
-also requires the current `detection_signature` from the viewer export or correction
-template. This prevents an old exclusion from removing a different candidate after
-threshold/detector changes; review and re-export candidates when the signature changes. Example entries:
-
-```json
-{
-  "landmarks": [{"name":"nasion","label":"Nz","position":[1,80,-20]}],
-  "fiducials": [
-    {"name":"fid-001","position":[40,55,65],"anatomical_label":"F4"},
-    {"name":"fid-002","exclude":true},
-    {"name":"manual-001","label":"manual-001","position":[-40,55,65]}
-  ]
-}
-```
-
-This fragment needs the metadata above and subject-specific measured values.
-Landmark names/labels are `nasion/Nz`, `inion/Iz`, `LPA/LPA`, `RPA/RPA`, `Cz/Cz`.
-Anchor laterality, spacing, field of view and distance to scalp are checked before
-EEG construction. Human confirmation scores of 1 indicate confirmation, not a
-calibrated probability. New corrections replace the previous correction input;
-keep all previously confirmed entries you intend to retain. Browser exports
-include original confirmed anchors automatically.
-
-## Derivatives, cache and QC
-
-```text
-saves/derivatives/subjects/sub-001/
-  manifest.json              # source/options/code/software hashes and output checksums
-  markers.json               # category, native positions, confidence, status; optional MNI positions
-  coordinates.tsv            # reusable native RAS mm coordinate table
-  scalp.vtp / scalp.ply      # full-resolution / decimated viewer mesh
-  skull.vtp / skull.ply      # only when supplied by skull segmentation
-  head_mask.nii.gz           # derived native-grid head mask
-  transforms.json            # affine provenance or explicit unregistered status
-  qc.json                    # segmentation, detection and electrode QC
-  qc_projection.png          # three native slices; points explicitly labeled as projections
-  qc_fid-*.png               # three actual slices through each marker center
-  qc_landmark-*.png          # actual slices through each proposed/corrected anchor
-  corrections_template.json  # for review; never silently applied
-  corrections_applied.json   # exact supplied correction file, when present
-  T1w_in_MNI.nii.gz          # registration only
-  MNI_to_native_LPS.tfm      # registration only
-  qc_registration.png        # registration only
-viewer/src/data/sub-001/
-  scalp.ply / markers.json / [skull.ply]
-```
-
-Inputs remain unchanged. SHA256 fingerprints include original inputs, correction,
-transform/reference/skull inputs, processing options, source code and relevant
-software versions. Identical reruns verify derivative checksums and reuse the
-cache; `--force` explicitly rebuilds. Each subject has a writer lock, staged
-outputs, and replacement only after processing succeeds. A stale lock from a
-killed process can be removed after confirming no ingestion is running. A
-`.ID-previous` directory after an interrupted replacement needs manual recovery
-before retrying. Viewer copies are generated local assets; they can be regenerated
-from the cache. Avoid simultaneous ingestion of different subjects while Parcel
-builds: the shared static registry is regenerated after each export.
-
-Both input/derivative folders and viewer data are Git-ignored. Existing public
-deployment checks reject unallowlisted subjects. Do not add patient datasets to
-the public allowlist. Removing an input does not delete its processed subject;
-remove the generated subject folders and regenerate the registry if desired.
-
-## Reproducible verification without real subject MRI
-
-```bash
-python scripts/synthetic_subject_demo.py
-# Creates synthetic-demo: three bright spheres, an ellipsoid scalp,
-# explicitly supplied ground-truth anchors and synthetic skull mask.
-# Refuses to overwrite an existing demo input; use --subject synthetic-demo-2.
+python scripts/synthetic_subject_demo.py                         # original three-marker fixture
+python scripts/synthetic_subject_demo.py --subject synthetic-five --five
 python -m pytest tests/ -q
+npm --prefix viewer test
 cd viewer
-npm test
 npx playwright install chromium
 npm run test:browser
 npm run build
 ```
 
-Browser integration expects both `MNI152` (run `run_pipeline.py --template`) and
-`synthetic-demo` assets. The test uses software WebGL, switches MNI → subject →
-MNI, checks layers, edits a fiducial, inspects coordinates/confidence, validates
-correction JSON and browser persistence, and saves a screenshot in
-`viewer/test-results/synthetic-subject.png`. Python tests exercise reflected and
-oblique affines, units, transform direction/LPS conversion, exact source identity,
-known physical translation registration, marker centers, no-marker behavior,
-correction recomputation, optional skull alignment and cache corruption.
-
-The phantom is an engineering fixture, not human MRI and not evidence of
-clinical marker detection accuracy. Its anchor coordinates are explicitly supplied
-from construction truth, not inferred anatomical detections. See the
-[delivery report](subject-reconstruction-report.md) for actual verification results.
+- Demo generation refuses to overwrite inputs. Existing demos can be re-ingested with their `synthetic_anchor_corrections.json` and `synthetic_skull_mask.nii.gz` options.
+- Browser tests expect MNI152, `synthetic-demo`, and `synthetic-five`; API/Parcel start automatically.
+- Figures and the latest task results: [subject-reconstruction-report.md](subject-reconstruction-report.md).

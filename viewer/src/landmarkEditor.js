@@ -3,7 +3,7 @@ import { closestScalpPoint, surfaceStep } from "./landmarkGeometry.mjs";
 
 const LABELS = { Nz: "Nasion", Iz: "Inion", LPA: "LPA", RPA: "RPA" };
 
-export function createLandmarkEditor({ onChange, showLandmarks }) {
+export function createLandmarkEditor({ onChange, showLandmarks, onSelect = () => {} }) {
   const panel = document.getElementById("landmark-editor");
   const select = document.getElementById("landmark-select");
   const fields = ["x", "y", "z"].map((axis) => document.getElementById("landmark-" + axis));
@@ -41,11 +41,13 @@ export function createLandmarkEditor({ onChange, showLandmarks }) {
     setPick(false);
     showLandmarks(mesh?.userData.marker);
     sync();
+    onSelect(mesh?.userData.marker);
   }
   function update(point, normal) {
     if (!selected) return;
     selected.position.copy(point);
     selected.userData.marker.position = point.toArray();
+    delete selected.userData.marker.mni_position;
     selected.userData.marker.normal = normal.toArray();
     if (subjectData?.dataset_kind === "reconstructed_subject") {
       selected.userData.marker.status = "manually_confirmed";
@@ -56,7 +58,9 @@ export function createLandmarkEditor({ onChange, showLandmarks }) {
     const saved = save();
     sync();
     status.textContent = "Edited. " + (saved ? "Saved in this browser. " : "Browser storage unavailable; export to keep edits. ")
-      + "Export JSON and rerun subject ingestion to update saved derivatives and EEG positions.";
+      + (subjectData?.dataset_kind === "reconstructed_subject"
+        ? "Live previews use these locations. Save reviewed changes to persist, or export JSON for offline ingestion."
+        : "Template simulation and metrics retain the original landmarks.");
     onChange(selected.userData.marker);
   }
   select.addEventListener("change", () => choose(meshes.find((m) => m.userData.marker.name === select.value)));
@@ -121,6 +125,13 @@ export function createLandmarkEditor({ onChange, showLandmarks }) {
   });
   window.addEventListener("keydown", (event) => { if (event.key === "Escape") setPick(false); });
   return {
+    placeCoordinates(coords) {
+      if (!selected) return;
+      const point = new Vector3().fromArray(coords);
+      const nearest = closestScalpPoint(geometry, point);
+      // MRI fiducial centers keep their cap offset; anatomical anchors use scalp contacts.
+      update(selected.userData.marker.category === "fiducial" ? point : nearest.point, nearest.normal);
+    },
     load(datasetKey, markerData, landmarkMeshes, scalpGeometry) {
       key = datasetKey;
       subjectData = markerData;
@@ -158,7 +169,7 @@ export function createLandmarkEditor({ onChange, showLandmarks }) {
       setPick(false);
       sync();
       if (dirty && selected) onChange(selected.userData.marker);
-      status.textContent = dirty ? "Restored browser edits. Simulation and metrics still use the original landmarks." : "Select a landmark or MRI fiducial. Edit or confirm by applying coordinates, then export corrections.";
+      status.textContent = dirty ? "Restored browser edits. Save reviewed changes to persist; Export JSON is available offline." : "Select a landmark or MRI fiducial. Apply coordinates to edit/confirm, then save reviewed changes.";
     },
     select(mesh) {
       if (!meshes.includes(mesh)) return false;
