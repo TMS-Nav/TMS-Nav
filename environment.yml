@@ -5,6 +5,6 @@ dependencies:
   - python=3.12
   - pip
   - nodejs=22
-  - alsa-lib  # Linux: Chromium browser verification; omit on other platforms
+  - sel(linux): alsa-lib
   - pip:
       - -r requirements-dev.txt

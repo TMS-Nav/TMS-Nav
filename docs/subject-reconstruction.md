@@ -25,7 +25,7 @@ eval "$(micromamba shell hook --shell bash)"
 micromamba activate tms312
 npm --prefix viewer ci
 python run_pipeline.py --template             # generate/cache MNI once
-python ingest_subject.py sub-001 /path/to/native_T1w.nii.gz
+python ingest_subject.py r-02 ./saves/subjects/r-02/T1w.nii.gz
 python run_viewer.py
 ```
 
