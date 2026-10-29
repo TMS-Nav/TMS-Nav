@@ -7,7 +7,7 @@ import { PLYLoader } from "three/examples/jsm/loaders/PLYLoader.js";
 import { CSS2DRenderer, CSS2DObject } from "three/examples/jsm/renderers/CSS2DRenderer.js";
 
 import { DATASETS, AIM1 } from "./datasetRegistry.js";
-import { defaultDatasetKey, isTemplateDataset, loadDatasetAssets } from "./datasetAssets.mjs";
+import { defaultDatasetKey, isDemoDataset, isTemplateDataset, loadDatasetAssets } from "./datasetAssets.mjs";
 import { createAim2View } from "./aim2.js";
 import { createLandmarkEditor } from "./landmarkEditor.js";
 import { createSubjectReview } from "./subjectReview.js";
@@ -213,7 +213,7 @@ const landmarkEditor = createLandmarkEditor({
     showInfo(marker);
     if (currentIsTemplate) {
       eegStale = true; eegGroup.visible = false; arcGroup.visible = false;
-      document.getElementById("eeg-status").textContent = "Template edits require rebuilding the MNI demo.";
+      document.getElementById("eeg-status").textContent = "Edits to a demo head need it rebuilt with run_pipeline.py.";
     } else review?.changed(marker);
   },
   onSelect: (marker) => { if (marker) showInfo(marker); },
@@ -305,10 +305,13 @@ async function loadDataset(key) {
   document.getElementById("fatal").hidden = true;
 
   // the monte carlo json is fetched per subject rather than bundled, so the first
-  // load of an embedded page only pulls the head that is on screen
+  // load of an embedded page only pulls the head that is on screen. "template" is
+  // the MNI head alone; the sample heads are demos too, with the same simulated
+  // targets, coil and Monte Carlo, but in their own scanner coordinates
   const template = isTemplateDataset(key, ds);
+  const demo = isDemoDataset(key, ds);
   const { scalpGeo, skullGeo, coilGeo, monteCarlo } = await loadDatasetAssets(
-    ds, template, loadPLY, async (url) => {
+    ds, demo, loadPLY, async (url) => {
       const response = await fetch(url);
       if (!response.ok) throw new Error(`monte carlo ${response.status}`);
       return response.json();
@@ -321,32 +324,33 @@ async function loadDataset(key) {
   clearScene();
 
   currentSubject = ds.label || key;
-  currentIsTemplate = template;
+  currentIsTemplate = demo;
   currentKey = key;
   distData = null;
-  mcGroup.visible = template && layerState["toggle-mc"];
+  mcGroup.visible = demo && layerState["toggle-mc"];
   for (const id of ["toggle-mc", "toggle-coil", "toggle-targets"]) {
-    document.getElementById(id).disabled = !template;
+    document.getElementById(id).disabled = !demo;
   }
-  document.getElementById("mc-panel").hidden = !template;
+  document.getElementById("mc-panel").hidden = !demo;
   document.getElementById("subject-qc").textContent = template ? "MNI template demo" :
+    demo ? "SimNIBS sample head, a demo. Cyan spheres: estimated EEG. Click points for coordinates." :
     [ds.skullURL ? "Skull: supplied segmentation; review required" : "Skull unavailable from T1 alone",
      `MRI candidates: ${(ds.markers.fiducials || []).length}; review on MRI`,
      "Landmarks require confirmation. Cyan spheres: estimated EEG. Click points for coordinates and confidence."].join(" · ");
   const markers = structuredClone(ds.markers);
   currentMarkers = markers;
-  document.getElementById("toggle-fiducials").closest("label").hidden=template;
+  document.getElementById("toggle-fiducials").closest("label").hidden=demo;
   currentCoordinateLabel = markers.coordinate_frame?.template || "Subject RAS";
   addScalp(scalpGeo);
   if (skullGeo) skullGroup.add(new THREE.Mesh(skullGeo, new THREE.MeshStandardMaterial({color: 0xe9d7b3, side: THREE.DoubleSide})));
   document.getElementById("toggle-skull").disabled = !skullGeo;
   if (coilGeo) addCoil(coilGeo);
-  if (template) addTargets(markers.targets || []);
-  if (!template) addFiducials(markers.fiducials || []);
-  addLandmarks(markers.landmarks || [], template ? markers.targets : []);
+  if (demo) addTargets(markers.targets || []);
+  if (!demo) addFiducials(markers.fiducials || []);
+  addLandmarks(markers.landmarks || [], demo ? markers.targets : []);
   addEeg(markers);
   landmarkEditor.load(key, markers, [...landmarkGroup.children, ...fiducialGroup.children], scalpGeo);
-  if (template && monteCarlo) addMonteCarlo(monteCarlo);
+  if (demo && monteCarlo) addMonteCarlo(monteCarlo);
   else renderDistances();
   // both tabs open on the whole head, framed the same way
   frameCamera(scalpGeo);
@@ -354,7 +358,8 @@ async function loadDataset(key) {
   hideInfo();
   restoreUiState();
   stage.dataset.subject = key;
-  review.load(key,template);
+  // a demo head was never ingested, so there is no cap marker review to load for it
+  review.load(key,demo);
   // the review load picks the right panel by subject kind, the aim 1 view decides it
   syncAim1Panel();
 

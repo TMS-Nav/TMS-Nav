@@ -86,8 +86,29 @@ def efield_files(manifest_path):
     return files
 
 
-def write_registry(data_dir, registry_path):
+def sample_subjects(public_list):
+    """The public sample heads, every name on public-subjects.json but the template.
+
+    the list is what may go on the public site, and patient scans never do, so a
+    head on it is sample data: the simnibs example heads. those get the aim 1 demo
+    layers (targets, coil, monte carlo) like the template. an empty set when the
+    file is missing
+    """
+
+    public_list = Path(public_list)
+    if not public_list.exists():
+        return set()
+    with open(public_list) as f:
+        return set(json.load(f).get("subjects", {})) - {"MNI152"}
+
+
+def write_registry(data_dir, registry_path, public_list=None):
     """Regenerate datasetRegistry.js from whatever subject folders actually exist.
+
+    each head gets a kind: "template" for MNI152, "sample" for the other public
+    sample heads (see sample_subjects), "subject" for anything else, which is a
+    scan of a person and never loads the simulated aim 1 layers. public_list
+    defaults to viewer/public-subjects.json beside the registry
 
     parcel needs static imports, so the viewer cannot read the folder at runtime.
     the pipeline writes this file instead, which means the dropdown always matches
@@ -103,6 +124,8 @@ def write_registry(data_dir, registry_path):
 
     data_dir = Path(data_dir)
     registry_path = Path(registry_path)
+    samples = sample_subjects(public_list if public_list is not None
+                              else registry_path.parent.parent / "public-subjects.json")
 
     subjects = sorted(
         (d.name for d in data_dir.iterdir()
@@ -126,7 +149,10 @@ def write_registry(data_dir, registry_path):
         qc = payload.get("qc", {})
         label = f"{name} (defaced)" if qc.get("defaced") else name
         template = name == "MNI152"
-        if template and (data_dir / name / "montecarlo.json").exists():
+        kind = "template" if template else "sample" if name in samples else "subject"
+        # the simulated aim 1 layers, for the template and the sample heads only
+        demo = kind != "subject"
+        if demo and (data_dir / name / "montecarlo.json").exists():
             imports.append(f'import {var}_MC from "url:./data/{name}/montecarlo.json";')
             mc = f"{var}_MC"
         else:
@@ -149,10 +175,10 @@ def write_registry(data_dir, registry_path):
         entries.append(
             f'  {json.dumps(name)}: {{\n'
             f'    label: {json.dumps(label)},\n'
-            f'    kind: {json.dumps("template" if template else "subject")},\n'
+            f'    kind: {json.dumps(kind)},\n'
             f'    scalpURL: {asset("scalp.ply")},\n'
             f'    skullURL: {asset("skull.ply")},\n'
-            f'    coilURL: {asset("coil.ply") if template else "null"},\n'
+            f'    coilURL: {asset("coil.ply") if demo else "null"},\n'
             f'    markers: {var}_MARKERS,\n'
             f'    monteCarloURL: {mc},\n'
             f'    efield: {efield},\n'

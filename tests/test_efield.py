@@ -592,6 +592,28 @@ def test_registry_has_efield_only_with_a_manifest():
     assert "S1_EFIELD" not in text and "efield: null" in text
 
 
+
+def test_registry_gives_sample_heads_the_demo_layers():
+    """Heads on the public list are sample data: coil and monte carlo like the template."""
+
+    from src.export_web import write_registry
+
+    with tempfile.TemporaryDirectory() as tmp:
+        data = Path(tmp) / "data"
+        for s in ("MNI152", "Ernie", "sub-001"):
+            (data / s).mkdir(parents=True)
+            for fn in ("markers.json", "coil.ply", "montecarlo.json", "scalp.ply"):
+                (data / s / fn).write_text("{}")
+        public = Path(tmp) / "public-subjects.json"
+        public.write_text(json.dumps({"subjects": {"MNI152": "atlas", "Ernie": "simnibs example"}}))
+        path, _ = write_registry(data, Path(tmp) / "reg.js", public_list=public)
+        text = path.read_text()
+    block = {name: text.split(f'"{name}": {{')[1].split("},")[0] for name in ("MNI152", "Ernie", "sub-001")}
+    assert '"template"' in block["MNI152"] and '"sample"' in block["Ernie"] and '"subject"' in block["sub-001"]
+    assert 'coil.ply' in block["Ernie"] and "_MC" in block["Ernie"]
+    # a scan of a person never gets the simulated layers, whatever is in its folder
+    assert "coilURL: null" in block["sub-001"] and "monteCarloURL: null" in block["sub-001"]
+
 TESTS = [
     test_matsimnibs_round_trip,
     test_orientation_of_known_rotation,
@@ -610,6 +632,7 @@ TESTS = [
     test_export_cortex_writes_one_field_per_pose,
     test_export_volumes_grid_and_scale,
     test_registry_has_efield_only_with_a_manifest,
+    test_registry_gives_sample_heads_the_demo_layers,
     test_sample_heads_are_found_at_any_depth,
     test_simnibs_dir_from_the_environment,
     test_headmodel_finds_ernie,

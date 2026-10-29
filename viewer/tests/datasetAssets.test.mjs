@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { defaultDatasetKey, isTemplateDataset, loadDatasetAssets } from '../src/datasetAssets.mjs';
+import { defaultDatasetKey, isDemoDataset, isTemplateDataset, loadDatasetAssets } from '../src/datasetAssets.mjs';
 
 const subject = {scalpURL: {href:'native-scalp'}, skullURL:{href:'native-skull'},
   coilURL:{href:'legacy-coil'}, monteCarloURL:'legacy-mc', markers:{coordinate_frame:{name:'subject_RAS'}}};
@@ -32,4 +32,16 @@ test('subject without skull, coil, or MC loads successfully', async () => {
   assert.equal(result.scalpGeo, 'head');
   assert.equal(result.skullGeo, null);
   assert.equal(result.coilGeo, null);
+});
+
+test('sample heads load the demo layers in their own coordinates, patients never do', async () => {
+  const sample = {...subject, kind: 'sample'};
+  assert.equal(isTemplateDataset('Ernie', sample), false, 'a sample head is not the MNI template');
+  assert.equal(isDemoDataset('Ernie', sample), true);
+  assert.equal(isDemoDataset('MNI152', template), true);
+  assert.equal(isDemoDataset('patient', {...subject, kind: 'subject'}), false);
+  const urls = [];
+  const result = await loadDatasetAssets(sample, isDemoDataset('Ernie', sample),
+    async (url) => { urls.push(url); return url; }, async (url) => { urls.push(url); return {simulation: true}; });
+  assert.ok(result.monteCarlo && urls.includes('legacy-coil') && urls.includes('legacy-mc'));
 });

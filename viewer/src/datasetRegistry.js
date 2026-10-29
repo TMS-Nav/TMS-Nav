@@ -3,12 +3,18 @@
 import S0_MARKERS from "./data/MNI152/markers.json";
 import S0_MC from "url:./data/MNI152/montecarlo.json";
 import S1_MARKERS from "./data/Ernie/markers.json";
+import S1_MC from "url:./data/Ernie/montecarlo.json";
 import S1_EFIELD from "./data/Ernie/efield/manifest.json";
 import S2_MARKERS from "./data/T1/markers.json";
+import S2_MC from "url:./data/T1/montecarlo.json";
 import S3_MARKERS from "./data/T2/markers.json";
+import S3_MC from "url:./data/T2/montecarlo.json";
 import S4_MARKERS from "./data/T3/markers.json";
+import S4_MC from "url:./data/T3/montecarlo.json";
 import S5_MARKERS from "./data/T4/markers.json";
+import S5_MC from "url:./data/T4/montecarlo.json";
 import S6_MARKERS from "./data/T5/markers.json";
+import S6_MC from "url:./data/T5/montecarlo.json";
 
 export const DATASETS = {
   "MNI152": {
@@ -23,12 +29,12 @@ export const DATASETS = {
   },
   "Ernie": {
     label: "Ernie",
-    kind: "subject",
+    kind: "sample",
     scalpURL: new URL("./data/Ernie/scalp.ply", import.meta.url),
     skullURL: null,
-    coilURL: null,
+    coilURL: new URL("./data/Ernie/coil.ply", import.meta.url),
     markers: S1_MARKERS,
-    monteCarloURL: null,
+    monteCarloURL: S1_MC,
     efield: {
       manifest: S1_EFIELD,
       files: {
@@ -51,52 +57,52 @@ export const DATASETS = {
   },
   "T1": {
     label: "T1 (defaced)",
-    kind: "subject",
+    kind: "sample",
     scalpURL: new URL("./data/T1/scalp.ply", import.meta.url),
     skullURL: null,
-    coilURL: null,
+    coilURL: new URL("./data/T1/coil.ply", import.meta.url),
     markers: S2_MARKERS,
-    monteCarloURL: null,
+    monteCarloURL: S2_MC,
     efield: null,
   },
   "T2": {
     label: "T2 (defaced)",
-    kind: "subject",
+    kind: "sample",
     scalpURL: new URL("./data/T2/scalp.ply", import.meta.url),
     skullURL: null,
-    coilURL: null,
+    coilURL: new URL("./data/T2/coil.ply", import.meta.url),
     markers: S3_MARKERS,
-    monteCarloURL: null,
+    monteCarloURL: S3_MC,
     efield: null,
   },
   "T3": {
     label: "T3 (defaced)",
-    kind: "subject",
+    kind: "sample",
     scalpURL: new URL("./data/T3/scalp.ply", import.meta.url),
     skullURL: null,
-    coilURL: null,
+    coilURL: new URL("./data/T3/coil.ply", import.meta.url),
     markers: S4_MARKERS,
-    monteCarloURL: null,
+    monteCarloURL: S4_MC,
     efield: null,
   },
   "T4": {
     label: "T4 (defaced)",
-    kind: "subject",
+    kind: "sample",
     scalpURL: new URL("./data/T4/scalp.ply", import.meta.url),
     skullURL: null,
-    coilURL: null,
+    coilURL: new URL("./data/T4/coil.ply", import.meta.url),
     markers: S5_MARKERS,
-    monteCarloURL: null,
+    monteCarloURL: S5_MC,
     efield: null,
   },
   "T5": {
     label: "T5 (defaced)",
-    kind: "subject",
+    kind: "sample",
     scalpURL: new URL("./data/T5/scalp.ply", import.meta.url),
     skullURL: null,
-    coilURL: null,
+    coilURL: new URL("./data/T5/coil.ply", import.meta.url),
     markers: S6_MARKERS,
-    monteCarloURL: null,
+    monteCarloURL: S6_MC,
     efield: null,
   },
 };

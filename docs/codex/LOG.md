@@ -75,3 +75,10 @@ rather than assuming it from this log.
 - PI could not run the simulation: `efield/config.py` hard-coded this machine's SimNIBS and sample paths. Now: `TMSNAV_SIMNIBS_DIR` → `simnibs_python` on PATH → usual install folders; `.cmd` only on Windows; sample heads searched under `saves/sample_data/` and the sibling `Sample Datasets/`.
 - Added `scripts/fetch_sample_data.py` (SimNIBS example 1.1 GB, group 2.7 GB, from the SimNIBS datasets page) and `docs/efield.md`; `efield/README.md` points there. `sample_data` added to scan discovery exclusions.
 - Verified: pytest 86 passed, npm test 26 passed, demo dry run, missing-SimNIBS message. Real downloads not run.
+
+## 2026-10-29 — gh-pages redeploy and sample heads in Aim 1
+
+- Deployed main_ar 34a8f20 to gh-pages (a698659), checked live.
+- User found Ernie and T1–T5 showed no Aim 1 targets, coil or Monte Carlo. Cause: since 07fe146 only MNI152 counted as a demo; every other head was treated as a patient scan. `write_registry` now marks heads on `public-subjects.json` (other than MNI152) as kind `sample`; the viewer's `isDemoDataset` gives them the demo layers and skips the cap-review API (removes the public-site 404).
+- Aim 2 for MNI152 and T1–T5 left as "no e-field yet" at the user's choice; no simulations run for them.
+- Verified: pytest 87 passed, npm test 27 passed, build passed, local viewer Ernie/T3/MNI152 Aim 1 metrics and layers.
