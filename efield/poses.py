@@ -16,7 +16,9 @@ import numpy as np
 from efield.config import COIL_SKIN_DISTANCE_MM
 from src.stats import angle_between, rotation_angle
 
-METHODS = ("EEG", "MRI")
+# EEG is the cap placement brainsight recorded (method 1), RECON the cap placement
+# built off the mri reconstruction of the cap (method 2), MRI the guided one
+METHODS = ("EEG", "RECON", "MRI")
 
 
 def _unit(v):

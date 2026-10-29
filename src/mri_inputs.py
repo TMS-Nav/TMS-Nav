@@ -7,7 +7,10 @@ ROOT = Path(__file__).resolve().parents[1]
 SAVE_DIR = ROOT / "saves"
 TEMPLATE_DIR = SAVE_DIR / "templates"
 # These contain outputs or auxiliary inputs, never patient structural scans.
-RESERVED = {"templates", "previews", "brainsight", "aim1", "efield", "m2m", "derivatives"}
+# sample_data is where scripts/fetch_sample_data.py unpacks the simnibs datasets,
+# which carry raw T2 and diffusion scans of their own; the T1s it wants processed
+# it copies up into saves/ itself
+RESERVED = {"templates", "previews", "brainsight", "aim1", "efield", "m2m", "derivatives", "sample_data"}
 
 
 def is_nifti(path):

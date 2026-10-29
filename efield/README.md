@@ -5,9 +5,29 @@ Aim 2 asks what that does to the field in the brain. Each recorded coil pose bec
 SimNIBS simulation, and the field in a small region of cortex under the MRI guided
 coil is compared between the two localization methods.
 
+## The two cap methods
+
+The proposal gets the EEG cap placement two ways. Both are scored against the same
+MRI guided placement and the same ROI, and come out as separate rows in the long table.
+
+| method | `method` | where the pose comes from |
+|---|---|---|
+| 1, direct recording | `EEG` | Brainsight export, `sub-<ID>_EEGCAP_<SITE>_POSE_REP<n>` |
+| 2, MRI reconstruction | `RECON` | `saves/derivatives/subjects/<ID>/markers.json`, the 10-20 site `src/subject_ingest.py` built off the cap markers (`efield/reconstruction.py`) |
+| MRI guided | `MRI` | Brainsight export `sub-<ID>_MRI_<SITE>_POSE_REP<n>`; with none, the coil goes on the skin straight over the R01 target (`place = over_target`, finished by the runner on the head model) |
+
+- A RECON pose is a coil flat on the scalp at the site's electrode, 4 mm off it. It
+  copies the handle of the recorded MRI pose at that site, so the two differ in where
+  the coil is, not in how it was turned. With no recording it uses
+  `config.HANDLE_DIRECTIONS` (placeholder: SMA straight back, F4 back and 45° out).
+- Only a reconstruction with confirmed anchors (`estimated_from_confirmed_anchors`) is
+  used. Charm has to run on the same scan that was ingested, or the poses land in the
+  wrong space; the runner's skin distance check catches the gross cases.
+- Pairs come out as `EEG-MRI` and `RECON-MRI`. `analysis/efield_stats.py` reports each.
+
 ## Two interpreters
 
-SimNIBS ships its own conda python (`C:\Users\alizr\SimNIBS-4.6\bin\simnibs_python.cmd`,
+SimNIBS ships its own conda python (`<SimNIBS>/bin/simnibs_python`, `.cmd` on Windows,
 python 3.11) and cannot be installed into the project's python 3.13. So the project
 never imports simnibs. It writes a `job.json`, and the one script that does import
 simnibs, `efield/runner_simnibs.py`, is run with `simnibs_python` as a subprocess. The two
@@ -19,8 +39,9 @@ run_efield.py  (project python)                 runner_simnibs.py  (simnibs_pyth
   metrics.py <- results.json         <----       roi numbers per pose
 ```
 
-Note that `simnibs_python.cmd -c "..."` prints nothing on this machine, so every call
-into it uses a script file (see `config.simnibs_version`).
+Note that `simnibs_python.cmd -c "..."` printed nothing on Windows, so every call
+into it uses a script file (see `config.simnibs_version`). `config.find_simnibs_dir`
+says where SimNIBS is looked for.
 
 ## The dry run rule
 
@@ -38,15 +59,7 @@ hundreds of MB. Neither should ever happen as a side effect.
 
 ## Running it
 
-```
-python run_efield.py                       every saves/*.nii.gz, dry run
-python run_efield.py --subjects T1 T2
-python run_efield.py --m2m "..\Sample Datasets\Ernie\m2m_ernie" --subjects T1
-                                           end to end dry run on a finished head model
-python tests/test_efield.py                or python -m pytest tests/
-python analysis/efield_stats.py            the statistics, on a synthetic table until
-                                           saves/efield/efield_long.csv exists
-```
+Setup, downloads, the Ernie demo and viewing the result: [docs/efield.md](../docs/efield.md).
 
 Outputs go under `saves/efield/<subject>/` (`job.json`, `dryrun.json`, later
 `results.json` and `sim/`), head models under `saves/m2m/m2m_<subject>/`, Brainsight
@@ -79,11 +92,17 @@ git ignored because it derives from patient scans.
   orientation difference means the same thing in both aims.
 - Endpoints (`metrics.py`): percentage difference in area weighted mean |E| in the ROI is
   primary; peak |E|, max |E_normal|, |E| at the ROI centre and the Dice overlap of the
-  half maximum hotspots are secondary. Statistics run on subjects, never on reps.
+  half maximum hotspots are secondary. Statistics run on subjects, never on reps. Dice
+  is left out (NaN) when both hotspots are empty.
+- `E_normal` is E · the central surface's outward node normal: positive points out of
+  the cortex, negative into it.
+- Fields are simulated at 1 A/µs and scale linearly with dI/dt. The viewer's coil
+  current slider rescales every number; an absolute V/m cut has to be compared at the
+  same current.
 
 ## What remains
 
-1. Run charm on the six sample scans (`python run_efield.py --charm`, or the printed
+1. Run charm on the sample scans (`python run_efield.py --charm`, or the printed
    commands one at a time) so `saves/m2m/m2m_T1..T6` exist.
 2. Get real Brainsight session exports in NIfTI:Aligned space named per the protocol
    (`sub-<ID>_EEGCAP_<SITE>_POSE_REP<n>`, `sub-<ID>_MRI_<SITE>_POSE_REP<n>`). Until then the
@@ -95,5 +114,9 @@ git ignored because it derives from patient scans.
    placeholder 50 V/m) and the handle direction convention per site.
 5. `python run_efield.py --run` on a real head model, then `analysis/efield_stats.py` on
    the resulting long table. Install `statsmodels` for the mixed model.
-6. `export_web.py` is a stub; the runner should dump the central surface to npz so the
-   viewer can paint |E| on the cortex without simnibs.
+6. Decide the dI/dt each subject is scored at (their stimulator intensity, or 1 A/µs
+   with `SUPRATHRESHOLD_ABS_VM` scaled to match).
+
+The Ernie demo (`python -m efield.demo_ernie`) runs method 2 end to end on public data:
+RECON poses off Aim 1's 10-20 sites on Ernie, MRI guided poses over Aim 1's targets,
+then `export_web.py` writes |E|, E_normal and the slice volumes for the viewer.

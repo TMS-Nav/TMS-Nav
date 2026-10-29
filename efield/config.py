@@ -1,7 +1,10 @@
 # where simnibs lives on this machine, the coil and stimulation defaults, and
 # the folders the aim 2 files go to. every path can be overridden with an
-# environment variable so the same code runs on another machine untouched.
+# environment variable, and the defaults look for simnibs and the sample heads
+# where the installers and scripts/fetch_sample_data.py put them, so the same
+# code runs on windows, macos and linux. docs/efield.md has the setup
 import os
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -17,13 +20,57 @@ def _env_path(name, default):
 
 
 # --- simnibs install ------------------------------------------------------------
-SIMNIBS_DIR = _env_path("TMSNAV_SIMNIBS_DIR", r"C:\Users\alizr\SimNIBS-4.6")
-# the conda python that has simnibs on it. it is a .cmd wrapper on windows, and
+# the simnibs launchers are .cmd wrappers on windows and plain scripts elsewhere
+_EXE = ".cmd" if os.name == "nt" else ""
+
+
+def _version_key(path):
+    """SimNIBS-4.6 sorts after SimNIBS-4.10 as text, so compare the numbers."""
+
+    nums = "".join(c if c.isdigit() else " " for c in path.name).split()
+    return [int(n) for n in nums]
+
+
+def find_simnibs_dir():
+    """The simnibs install folder, the one whose bin/ holds simnibs_python.
+
+    in order: TMSNAV_SIMNIBS_DIR, simnibs_python on the PATH (the installers
+    add their bin/ to it), then the folders the installers offer, newest
+    version first. the installer lets the user pick, so this can miss, and
+    then TMSNAV_SIMNIBS_DIR says where it is
+    """
+
+    if os.environ.get("TMSNAV_SIMNIBS_DIR"):
+        return Path(os.environ["TMSNAV_SIMNIBS_DIR"])
+    on_path = shutil.which("simnibs_python")
+    if on_path:
+        # not resolved: on macos and linux the launcher in bin/ can be a link
+        # into simnibs_env, and bin/.. is the install folder either way
+        return Path(on_path).parent.parent
+    home = Path.home()
+    bases = [home, home / "Applications", Path("/Applications")]
+    if os.environ.get("LOCALAPPDATA"):
+        local = Path(os.environ["LOCALAPPDATA"])
+        bases += [local, local / "Programs"]
+    found = []
+    for base in bases:
+        try:
+            found += [d for d in base.glob("SimNIBS*") if (d / "bin" / f"simnibs_python{_EXE}").exists()]
+        except OSError:
+            continue
+    if found:
+        return max(found, key=_version_key)
+    # nothing found. a path that says what was expected, simnibs_available() is False
+    return home / "SimNIBS-4.6"
+
+
+SIMNIBS_DIR = find_simnibs_dir()
+# the conda python that has simnibs on it. on windows it is a .cmd wrapper, and
 # passing it `-c "..."` printed nothing in testing, so it is always given a script
 # FILE to run, never an inline string. see simnibs_version below
-SIMNIBS_PYTHON = _env_path("TMSNAV_SIMNIBS_PYTHON", SIMNIBS_DIR / "bin" / "simnibs_python.cmd")
+SIMNIBS_PYTHON = _env_path("TMSNAV_SIMNIBS_PYTHON", SIMNIBS_DIR / "bin" / f"simnibs_python{_EXE}")
 # head model builder, `charm <subID> <T1> [T2]`
-CHARM = _env_path("TMSNAV_CHARM", SIMNIBS_DIR / "bin" / "charm.cmd")
+CHARM = _env_path("TMSNAV_CHARM", SIMNIBS_DIR / "bin" / f"charm{_EXE}")
 
 # --- coil and stimulation -----------------------------------------------------
 # relative names resolve inside simnibs resources/coil_models. the study coil is
@@ -42,6 +89,17 @@ MAP_TO_VOL = os.environ.get("TMSNAV_MAP_TO_VOL", "0") == "1"
 # coil housing to scalp, mm. simnibs default, used when a pose is built from a
 # scalp point rather than a recorded matrix
 COIL_SKIN_DISTANCE_MM = float(os.environ.get("TMSNAV_COIL_SKIN_DISTANCE_MM", 4.0))
+
+# which way the coil handle points at each site when nothing recorded it, a RAS
+# direction that gets laid flat on the scalp at the coil. used for the poses
+# built off the mri reconstruction of the cap, and for an mri guided pose placed
+# over the r01 target when there is no brainsight recording to copy. sma points
+# straight back along the midline, f4 back and 45 degrees out from it. a
+# PLACEHOLDER, the protocol's handle convention per site still wants his sign off
+HANDLE_DIRECTIONS = {
+    "SMA": (0.0, -1.0, 0.0),
+    "F4": (0.70710678, -0.70710678, 0.0),
+}
 
 # --- roi and overlap -----------------------------------------------------------
 # radius of the sphere on the gm central surface that the roi numbers come from
@@ -67,6 +125,11 @@ SIM_ROOT = _env_path("TMSNAV_SIM_ROOT", ROOT / "saves" / "efield")
 # brainsight session exports, <subject>_coil_pose_samples.txt
 BRAINSIGHT_ROOT = _env_path("TMSNAV_BRAINSIGHT_ROOT", ROOT / "saves" / "brainsight")
 
+# the mri reconstruction of the cap, src/subject_ingest.py writes
+# <subject>/markers.json here with the 10-20 sites built off the scan. method 2
+# of the proposal takes its eeg placements from these
+DERIVATIVE_ROOT = _env_path("TMSNAV_DERIVATIVE_ROOT", ROOT / "saves" / "derivatives" / "subjects")
+
 # the r01's own fmri targets, one row per subject per site. see the template at
 # efield/fmri_targets_example.csv. this is the file that makes the e field
 # numbers mean "field delivered to the intended target" rather than "field
@@ -78,12 +141,34 @@ FMRI_TARGETS = _env_path("TMSNAV_FMRI_TARGETS", ROOT / "saves" / "fmri_targets.c
 # coordinate is probably in the wrong space, or deep, and wants checking
 ROI_SNAP_WARN_MM = float(os.environ.get("TMSNAV_ROI_SNAP_WARN_MM", 8.0))
 
-# finished example head models that ship with simnibs, used for dry runs until
-# the study scans have been through charm
-SAMPLE_M2M_ROOTS = [
-    Path(r"C:\Users\alizr\Documents\.TMSResearch\Sample Datasets\Ernie"),
-    Path(r"C:\Users\alizr\Documents\.TMSResearch\Sample Datasets\GroupDataset"),
-]
+# finished example head models from the simnibs datasets page, used for the
+# ernie demo and for dry runs until the study scans have been through charm.
+# scripts/fetch_sample_data.py unpacks them into saves/sample_data. a folder
+# beside the repo called "Sample Datasets" is looked in too, which is where they
+# were unpacked by hand before the script existed. TMSNAV_SAMPLE_DATA points
+# anywhere else
+SAMPLE_DATA = _env_path("TMSNAV_SAMPLE_DATA", ROOT / "saves" / "sample_data")
+
+
+def sample_m2m_roots(bases=None):
+    """Every folder, up to two levels under the sample data, that holds m2m_* head models.
+
+    the zips unpack to different depths, so the m2m folders are looked for
+    rather than assumed at a fixed place
+    """
+
+    bases = bases if bases is not None else [SAMPLE_DATA, ROOT.parent / "Sample Datasets"]
+    roots = []
+    for base in (Path(b) for b in bases):
+        if not base.is_dir():
+            continue
+        for d in [base, *base.glob("*"), *base.glob("*/*")]:
+            if d.is_dir() and not d.name.startswith("m2m_") and any(d.glob("m2m_*")) and d not in roots:
+                roots.append(d)
+    return roots
+
+
+SAMPLE_M2M_ROOTS = sample_m2m_roots()
 
 
 # --- is simnibs there ---------------------------------------------------------
@@ -120,7 +205,7 @@ def describe():
     """One line per setting, for the driver to print."""
 
     return "\n".join([
-        f"simnibs dir      {SIMNIBS_DIR}  ({'found' if simnibs_available() else 'MISSING'})",
+        f"simnibs dir      {SIMNIBS_DIR}  ({'found' if simnibs_available() else 'MISSING, see docs/efield.md'})",
         f"simnibs python   {SIMNIBS_PYTHON}",
         f"charm            {CHARM}",
         f"coil             {COIL_FILE}",
@@ -131,4 +216,5 @@ def describe():
         f"m2m root         {M2M_ROOT}",
         f"sim root         {SIM_ROOT}",
         f"brainsight root  {BRAINSIGHT_ROOT}",
+        f"sample heads     {', '.join(str(r) for r in SAMPLE_M2M_ROOTS) or f'none, run scripts/fetch_sample_data.py'}",
     ])

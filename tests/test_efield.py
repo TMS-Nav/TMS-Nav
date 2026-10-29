@@ -26,7 +26,11 @@ from src.stats import rotation_about  # noqa: E402
 from src.targets import Target  # noqa: E402
 import run_efield  # noqa: E402
 
-ERNIE = Path(r"C:\Users\alizr\Documents\.TMSResearch\Sample Datasets\Ernie\m2m_ernie")
+# ernie's finished head model from the simnibs example dataset, wherever
+# scripts/fetch_sample_data.py or a manual unpack put it. the tests that need it
+# skip when it is not there
+_ernie = find_m2m("ernie")
+ERNIE = _ernie.path if _ernie else Path("m2m_ernie_not_found")
 
 
 def _pose(**kw):
@@ -167,6 +171,35 @@ def test_post_processing_on_fake_arrays():
     assert pm2["dice_supra_abs"] < 1.0
 
 
+def test_sample_heads_are_found_at_any_depth():
+    """The dataset zips unpack to different depths, the m2m folders are found either way."""
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        (tmp / "examples" / "m2m_ernie").mkdir(parents=True)
+        (tmp / "group" / "GroupDataset" / "m2m_sub01").mkdir(parents=True)
+        (tmp / "empty").mkdir()
+        roots = config.sample_m2m_roots([tmp, tmp / "not_there"])
+        assert roots == [tmp / "examples", tmp / "group" / "GroupDataset"]
+
+
+def test_simnibs_dir_from_the_environment():
+    """TMSNAV_SIMNIBS_DIR wins over the search, and the launchers follow the os."""
+
+    old = os.environ.get("TMSNAV_SIMNIBS_DIR")
+    os.environ["TMSNAV_SIMNIBS_DIR"] = str(Path("somewhere") / "SimNIBS-9.9")
+    try:
+        assert config.find_simnibs_dir() == Path("somewhere") / "SimNIBS-9.9"
+    finally:
+        if old is None:
+            del os.environ["TMSNAV_SIMNIBS_DIR"]
+        else:
+            os.environ["TMSNAV_SIMNIBS_DIR"] = old
+    if "TMSNAV_SIMNIBS_PYTHON" not in os.environ:
+        assert config.SIMNIBS_PYTHON.name == ("simnibs_python.cmd" if os.name == "nt" else "simnibs_python")
+    assert sorted([Path("SimNIBS-4.10"), Path("SimNIBS-4.6")], key=config._version_key)[-1].name == "SimNIBS-4.10"
+
+
 def test_headmodel_finds_ernie():
     if not ERNIE.is_dir():
         print("  skip: ernie example not on this machine")
@@ -202,9 +235,13 @@ def test_runner_dry_run_on_ernie():
                                     name="sub-ernie_EEGCAP_F4_POSE_REP1", site="F4", method="EEG", rep=1)
     # a target 15 mm in from the electrode, about where the cortex is under f4
     rois = [RoiSpec(kind="fmri_target", centre=(f4 - 15.0 * n_out).tolist(), site="F4")]
+    # and a method 2 style mri pose with only the target, the runner puts it on the skin
+    from efield.reconstruction import over_target_pose
+    over = over_target_pose(rois[0], "ernie")
+    over.rep = 2
 
     tmp = Path(tempfile.mkdtemp(prefix="efield_test_"))
-    job = Job(subject="ernie", m2m=str(ERNIE), poses=[mri, eeg], rois=rois, out_dir=str(tmp / "sim"),
+    job = Job(subject="ernie", m2m=str(ERNIE), poses=[mri, eeg, over], rois=rois, out_dir=str(tmp / "sim"),
               poses_source="test")
     path = job.write_json(tmp / "job.json")
     cmd = runner_command(path, dry_run=True)
@@ -216,7 +253,11 @@ def test_runner_dry_run_on_ernie():
     assert out.returncode == 0, "runner dry run failed"
     plan = json.loads((tmp / "dryrun.json").read_text())
     assert plan["dry_run"] is True and plan["session_ok"] and not plan["problems"]
-    assert len(plan["poses"]) == 2 and len(plan["rois"]) == 1
+    assert len(plan["poses"]) == 3 and len(plan["rois"]) == 1
+    placed = plan["poses"][2]
+    assert placed["placed_over_target"] and placed["skin_distance_mm"] < 10.0
+    # over the target means on the skin above it, close to where the f4 coil sits
+    assert np.linalg.norm(np.asarray(placed["matsimnibs"])[:3, 3] - mri.centre) < 15.0
     assert plan["rois"][0]["n_nodes"] > 0
     for p in plan["poses"]:
         assert p["normal_into_head"] and p["skin_distance_mm"] < 10.0
@@ -362,6 +403,97 @@ def test_one_mri_rep_pairs_every_eeg_rep():
     assert abs(pct[("SMA", 1)]) < 1e-9 and abs(pct[("SMA", 2)] - 100.0) < 1e-9
 
 
+def _markers(status="estimated_from_confirmed_anchors"):
+    """A cap reconstruction the way src/subject_ingest.py writes it, two sites only."""
+
+    def el(label, pos, normal):
+        n = np.asarray(normal, dtype=float)
+        return {"name": f"EEG-{label}", "label": label, "position": list(pos), "normal": list(n / np.linalg.norm(n))}
+    return {"electrodes": [el("F4", [50.0, 80.0, 60.0], [0.5, 0.6, 0.6]), el("SMA", [2.0, 50.0, 95.0], [0.0, 0.3, 1.0])],
+            "eeg_qc": {"status": status}}
+
+
+def test_cap_poses_from_the_reconstruction():
+    """Method 2: a coil flat on the scalp at each reconstructed site, method RECON."""
+
+    from efield.reconstruction import cap_poses
+
+    m = _markers()
+    poses, missing = cap_poses(m, "sub-001", ["F4", "SMA", "C3"])
+    assert missing == {"C3": "the reconstruction has no electrode for this site"}
+    f4 = next(p for p in poses if p.site == "F4")
+    el = m["electrodes"][0]
+    n = np.asarray(el["normal"])
+    assert f4.method == "RECON" and f4.rep == 1 and f4.name == "sub-001_RECON_F4_POSE_REP1"
+    assert np.allclose(f4.centre, np.asarray(el["position"]) + n * config.COIL_SKIN_DISTANCE_MM)
+    assert np.allclose(f4.zdir, -n), "the coil normal points into the head"
+    assert abs(np.dot(f4.ydir, f4.zdir)) < 1e-9 and f4.extra["handle"] == "convention"
+    # f4's convention handle is back and out to the right, laid flat on the scalp
+    assert f4.ydir[1] < 0 and f4.ydir[0] > 0
+    assert is_rotation(f4.rotation)
+
+    # a recorded handle is copied instead
+    poses, _ = cap_poses(m, "sub-001", ["SMA"], handles={"SMA": [1.0, 0.0, 0.0]})
+    assert poses[0].ydir[0] > 0.99 and poses[0].extra["handle"] == "copied"
+
+    # a reconstruction off unconfirmed anchors is not used for a result
+    poses, missing = cap_poses(_markers("provisional_unconfirmed_anchors"), "sub-001", ["F4"])
+    assert poses == [] and "provisional_unconfirmed_anchors" in missing["F4"]
+
+
+def test_method2_adds_recon_and_an_over_target_mri_pose():
+    """With no recorded mri pose the coil is put over the r01 target, with one it is reused."""
+
+    from efield.reconstruction import method2_poses, reconstructed_subjects
+
+    rois = [RoiSpec(kind="fmri_target", centre=[40.0, 70.0, 45.0], site="F4"),
+            RoiSpec(kind="mni_sphere", mni=[2.0, -4.0, 62.0], site="SMA")]
+    with tempfile.TemporaryDirectory() as tmp:
+        (Path(tmp) / "001").mkdir()
+        (Path(tmp) / "001" / "markers.json").write_text(json.dumps(_markers()))
+        assert reconstructed_subjects(tmp) == ["sub-001"]
+        log = []
+        poses = method2_poses("sub-001", [], rois, root=tmp, log=log.append)
+        recorded = [_pose(site="F4", method="MRI", rep=1, name="m")]
+        with_mri = method2_poses("sub-001", recorded, rois, root=tmp, log=log.append)
+        assert method2_poses("sub-002", [], rois, root=tmp) == []
+
+    assert sorted(p.key() for p in poses) == [("F4", "MRI", 1), ("F4", "RECON", 1),
+                                               ("SMA", "MRI", 1), ("SMA", "RECON", 1)]
+    over = {p.site: p for p in poses if p.method == "MRI"}
+    assert over["F4"].extra["place"] == "over_target" and over["F4"].extra["target"] == [40.0, 70.0, 45.0]
+    assert over["SMA"].extra["target_mni"] == [2.0, -4.0, 62.0]
+    # survives the job file, so the runner sees where to put it
+    back = Job.from_dict(Job(subject="s", m2m="m", poses=poses, rois=rois).to_dict())
+    assert any(p.extra.get("place") == "over_target" for p in back.poses)
+
+    # a recorded mri pose at f4: no over target pose there, and its handle is copied
+    assert not any(p.site == "F4" and p.method == "MRI" for p in with_mri)
+    recon_f4 = next(p for p in with_mri if p.key() == ("F4", "RECON", 1))
+    assert recon_f4.extra["handle"] == "copied"
+    assert abs(np.dot(recon_f4.ydir, recorded[0].ydir)) > 0.9
+
+
+def test_recon_pairs_with_mri_on_its_own_row():
+    """RECON-MRI rows sit beside EEG-MRI ones, and an empty pair of hotspots has no dice."""
+
+    def block(mean, supra):
+        return {"mean_E_magn": mean, "peak_E_magn": mean, "max_abs_E_normal": mean, "E_magn_at_centre": mean,
+                "supra_nodes": supra}
+
+    results = {"subject": "sub-001", "poses": [
+        {"name": "m", "site": "F4", "method": "MRI", "rep": 1, "rois": {"F4_t": block(100.0, [])}},
+        {"name": "e", "site": "F4", "method": "EEG", "rep": 1, "rois": {"F4_t": block(90.0, [1])}},
+        {"name": "r", "site": "F4", "method": "RECON", "rep": 1, "rois": {"F4_t": block(80.0, [])}},
+    ]}
+    rows = long_rows(results)
+    pct = {r["method"]: r["value"] for r in rows if r["metric"] == "pct_diff_mean_roi"}
+    assert abs(pct["EEG-MRI"] + 10.0) < 1e-9 and abs(pct["RECON-MRI"] + 20.0) < 1e-9
+    dices = {r["method"]: r["value"] for r in rows if r["metric"] == "dice_supra"}
+    assert dices == {"EEG-MRI": 0.0}, "two empty hotspots have no overlap value"
+    assert np.isnan(dice([], []))
+
+
 def test_nearest_values_keep_the_field():
     from efield.export_web import nearest_values
 
@@ -397,9 +529,12 @@ def test_export_cortex_writes_one_field_per_pose():
         n = out["n_vertices"]
         f1 = np.fromfile(tmp / "web" / "efield_a.f32", dtype="<f4")
         f2 = np.fromfile(tmp / "web" / "efield_b.f32", dtype="<f4")
+        n1 = np.fromfile(tmp / "web" / out["poses"]["a"]["normal_file"], dtype="<f4")
     assert n == 6 and len(f1) == n and len(f2) == n
     assert sorted(f1.tolist()) == sorted(e1.tolist()) and np.allclose(f2, 2.0 * f1)
     assert out["poses"]["b"]["peak"] == e2.max()
+    # the signed perpendicular field rides along, the fixture's is -|E|
+    assert np.allclose(n1, -f1) and out["poses"]["a"]["normal_p_color"] > 0
 
 
 def test_export_volumes_grid_and_scale():
@@ -467,11 +602,16 @@ TESTS = [
     test_roi_is_the_r01_target,
     test_poses_come_from_the_exports,
     test_one_mri_rep_pairs_every_eeg_rep,
+    test_cap_poses_from_the_reconstruction,
+    test_method2_adds_recon_and_an_over_target_mri_pose,
+    test_recon_pairs_with_mri_on_its_own_row,
     test_post_processing_on_fake_arrays,
     test_nearest_values_keep_the_field,
     test_export_cortex_writes_one_field_per_pose,
     test_export_volumes_grid_and_scale,
     test_registry_has_efield_only_with_a_manifest,
+    test_sample_heads_are_found_at_any_depth,
+    test_simnibs_dir_from_the_environment,
     test_headmodel_finds_ernie,
     test_runner_dry_run_on_ernie,
 ]

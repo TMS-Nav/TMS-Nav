@@ -33,14 +33,23 @@ from src.stats import (  # noqa: E402
 )
 
 # --- the report ---------------------------------------------------------------------
-def report(rows, margin=PCT_MARGIN):
+# the two cap methods of the proposal, each compared with the mri guided placement
+CAP_LABELS = {"EEG": "method 1, cap placement recorded in brainsight",
+              "RECON": "method 2, cap reconstructed off the mri"}
+
+
+def report(rows, margin=PCT_MARGIN, cap="EEG"):
+    pair = f"{cap}-MRI"
+    rows = [r for r in rows if r["method"] in (cap, "MRI", pair)]
+    print(f"
+===== {pair}: {CAP_LABELS[cap]}")
     sites = sorted({r["site"] for r in rows})
     subjects = sorted({r["subject"] for r in rows})
     print(f"{len(subjects)} subjects, sites {', '.join(sites)}, {len(rows)} rows")
     print(f"equivalence margin on the primary endpoint +/- {margin:g} %  (placeholder, to be prespecified)")
 
     print("\n--- primary: paired % difference in mean roi |E|, eeg vs mri, one value per subject")
-    pct = subject_means(rows, "pct_diff_mean_roi")
+    pct = subject_means(rows, "pct_diff_mean_roi", pair)
     for site in sites:
         v = np.array(list(pct[site].values()))
         tost = equivalence(v, margin)
@@ -53,7 +62,7 @@ def report(rows, margin=PCT_MARGIN):
         print(f"       sign test p {tt['p_sign']:.4f}  (counts differences above and below 0, no normality assumed)")
 
     print("\n--- agreement: bland altman on mean roi |E|, eeg minus mri, V/m")
-    eeg, mri = subject_means(rows, "mean_E_magn", "EEG"), subject_means(rows, "mean_E_magn", "MRI")
+    eeg, mri = subject_means(rows, "mean_E_magn", cap), subject_means(rows, "mean_E_magn", "MRI")
     for site in sites:
         common = sorted(set(eeg[site]) & set(mri[site]))
         ba = bland_altman([eeg[site][s] - mri[site][s] for s in common])
@@ -67,7 +76,7 @@ def report(rows, margin=PCT_MARGIN):
     secondary = [m for m in PAIRED_METRICS if m != "pct_diff_mean_roi"]
     tests = []
     for m in secondary:
-        by_site = subject_means(rows, m)
+        by_site = subject_means(rows, m, pair)
         for site in sites:
             if site not in by_site:
                 continue
@@ -82,7 +91,7 @@ def report(rows, margin=PCT_MARGIN):
     print(f"  ({sum(reject)} of {len(tests)} survive fdr at q=0.05)")
 
     print("\n--- mixed effects: pct diff ~ site, random intercept per participant")
-    df = pd.DataFrame([r for r in rows if r["metric"] == "pct_diff_mean_roi" and r["method"] == "EEG-MRI"])
+    df = pd.DataFrame([r for r in rows if r["metric"] == "pct_diff_mean_roi" and r["method"] == pair])
     mm = site_mixed_model(df, "value")
     if "note" in mm:
         print(f"  {mm['note']}")
@@ -97,7 +106,7 @@ def report(rows, margin=PCT_MARGIN):
 
     print("\n--- the same numbers through efield.metrics.site_stats, what run_efield.py prints")
     from efield.metrics import format_site_stats
-    print(format_site_stats(site_stats(rows, margin=margin)))
+    print(format_site_stats(site_stats(rows, margin=margin, cap=cap)))
 
 
 def main(argv=None):
@@ -113,7 +122,9 @@ def main(argv=None):
     if len(subjects) < 2:
         print(f"{len(subjects)} subject in the table, the statistics need at least 2")
         return 1
-    report(rows)
+    for cap in CAP_LABELS:
+        if any(r["method"] == f"{cap}-MRI" for r in rows):
+            report(rows, cap=cap)
     return 0
 
 

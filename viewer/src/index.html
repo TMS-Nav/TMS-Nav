@@ -114,6 +114,16 @@
               <div class="seg" id="a2-methods" role="group" aria-label="How the coil was placed"></div>
             </fieldset>
 
+            <fieldset id="a2-field-set">
+              <legend>field</legend>
+              <div class="seg" id="a2-field" role="group" aria-label="Which part of the field">
+                <button type="button" data-field="magn" title="How strong the field is, |E|">strength</button>
+                <button type="button" data-field="normal" title="The part of the field across the cortex, signed: into it or out of it">perpendicular</button>
+              </div>
+              <label><input type="checkbox" id="a2-diff" autocomplete="off" /> minus MRI-guided</label>
+              <div class="hint" id="a2-diff-hint" role="status"></div>
+            </fieldset>
+
             <fieldset id="a2-slice-set">
               <legend>slice</legend>
               <div class="seg" id="a2-axis" role="group" aria-label="Slice direction">
@@ -147,8 +157,8 @@
         </div>
 
         <div class="credit">
-          Sample heads are the SimNIBS example data: Ernie (CC BY-NC 4.0) and the
-          group dataset (T1 to T5, ODC-PDDL, OpenfMRI ds000171), plus the MNI152 atlas.
+          Sample heads are the SimNIBS example data and the MNI152 atlas. For research and teaching only.
+          <button type="button" class="credit-link" id="sources-open" aria-haspopup="dialog" aria-controls="sources">Sources, licenses and disclaimer</button>
         </div>
       </aside>
 
@@ -248,8 +258,9 @@
         <div id="aim2-metrics" class="aim-pane" role="tabpanel" aria-labelledby="tab-aim2" hidden>
           <h2>Aim 2 E-field</h2>
           <div id="a2-empty" class="a2-empty" hidden>
-            <p>No e-field for <span id="a2-empty-subject"></span> yet. Simulate it, then write the viewer files:</p>
-            <pre><code>py -m efield.export_web saves/efield/&lt;subject&gt; &lt;viewer subject&gt;</code></pre>
+            <p>No e-field for <span id="a2-empty-subject"></span> yet. For the Ernie demo, from the repository root:</p>
+            <pre><code>python -m efield.demo_ernie</code></pre>
+            <p>docs/efield.md covers the downloads and exporting other runs.</p>
           </div>
           <div id="a2-body">
             <div id="a2-roi" class="a2-roi"></div>
@@ -263,23 +274,71 @@
                 <span class="a2-o a2-o-t" id="a2-o-t"></span>
                 <span class="a2-o a2-o-b" id="a2-o-b"></span>
               </div>
+              <figcaption class="hint" id="a2-slice-note" hidden>The perpendicular field is only defined on the cortex, so the slice shows the anatomy alone.</figcaption>
             </figure>
 
             <div class="a2-scale">
               <div class="a2-scale-head">
-                <span>Field strength</span><span>V/m at 1 A/µs</span>
+                <span id="a2-scale-title">Field strength</span><span id="a2-scale-unit">V/m at 1 A/µs</span>
               </div>
               <div class="a2-bar" id="a2-bar" aria-hidden="true"></div>
-              <div class="a2-ticks"><span>0</span><span id="a2-tick-max"></span></div>
+              <div class="a2-ticks"><span id="a2-tick-min">0</span><span id="a2-tick-mid"></span><span id="a2-tick-max"></span></div>
+              <div class="a2-ends" id="a2-ends" hidden><span id="a2-end-lo"></span><span id="a2-end-hi"></span></div>
               <div class="row a2-cut-row">
-                <label for="a2-cut">colour from <span id="a2-cut-val" class="val"></span></label>
+                <label for="a2-cut"><span id="a2-cut-label">colour from</span> <span id="a2-cut-val" class="val"></span></label>
                 <input type="range" id="a2-cut" min="0" max="90" step="5" value="20" />
+              </div>
+              <div class="row a2-cut-row">
+                <label for="a2-didt">coil current <span id="a2-didt-val" class="val">1 A/µs</span></label>
+                <input type="range" id="a2-didt" min="1" max="200" step="1" value="1" />
+                <p class="hint a2-didt-note">The field grows in step with the current. Set this to the stimulator's dI/dt at the treatment intensity. The simulation ran at 1 A/µs.</p>
               </div>
             </div>
           </div>
         </div>
       </aside>
     </div>
+
+    <dialog id="sources" aria-labelledby="sources-title">
+      <div class="sources-inner">
+        <header class="sources-head">
+          <h2 id="sources-title">Sources, licenses and disclaimer</h2>
+          <button type="button" class="sources-close" id="sources-close" aria-label="Close">
+            <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/></svg>
+          </button>
+        </header>
+
+        <div class="sources-body">
+          <p class="sources-note">
+            For research and teaching only, not for clinical decisions. Fields are simulated at 1 A/µs, and the
+            Ernie coil placements are a demo, not the study protocol. Every head shown is openly licensed sample data.
+          </p>
+
+          <h3>Data</h3>
+          <ul class="src-list">
+            <li><span>Ernie</span><a href="https://doi.org/10.1109/EMBC.2015.7318340" target="_blank" rel="noopener">Thielscher et al. 2015</a><a class="lic lic-nc" href="https://creativecommons.org/licenses/by-nc/4.0/" target="_blank" rel="noopener">CC BY-NC 4.0</a></li>
+            <li><span>T1 to T5</span><a href="https://doi.org/10.1371/journal.pone.0156859" target="_blank" rel="noopener">Lepping et al. 2016</a><a class="lic" href="https://openneuro.org/datasets/ds000171" target="_blank" rel="noopener">ODC-PDDL</a></li>
+            <li><span>MNI152</span><a href="https://doi.org/10.1016/j.neuroimage.2010.07.033" target="_blank" rel="noopener">Fonov et al. 2011</a><a class="lic" href="https://www.mcgill.ca/bic/software/tools-data-analysis/anatomical-mri/atlases/icbm152-non-linear-2009" target="_blank" rel="noopener">MNI notice</a></li>
+          </ul>
+
+          <h3>Field model</h3>
+          <ul class="src-list">
+            <li><span>SimNIBS 4</span><a href="https://doi.org/10.1007/978-3-030-21293-3_1" target="_blank" rel="noopener">Saturnino et al. 2019</a><span class="lic">GPL-3.0</span></li>
+            <li><span>CHARM</span><a href="https://doi.org/10.1016/j.neuroimage.2020.117044" target="_blank" rel="noopener">Puonti et al. 2020</a><span class="lic">GPL-3.0</span></li>
+            <li><span>D70 coil</span><a href="https://doi.org/10.1016/j.brs.2022.04.017" target="_blank" rel="noopener">Drakaki et al. 2022</a><span class="lic">GPL-3.0</span></li>
+          </ul>
+
+          <h3>Software</h3>
+          <ul class="src-list">
+            <li><span>three.js</span><a href="https://threejs.org" target="_blank" rel="noopener">threejs.org</a><span class="lic">MIT</span></li>
+            <li><span>NiiVue</span><a href="https://niivue.com" target="_blank" rel="noopener">niivue.com</a><span class="lic">BSD-2-Clause</span></li>
+            <li><span>Colour maps</span><a href="https://research.google/blog/turbo-an-improved-rainbow-colormap-for-visualization/" target="_blank" rel="noopener">Turbo, ColorBrewer</a><span class="lic">Apache-2.0</span></li>
+          </ul>
+
+          <p class="sources-fine">MNI152: Copyright (C) 1993–2004 Louis Collins, McConnell Brain Imaging Centre, Montreal Neurological Institute, McGill University.</p>
+        </div>
+      </div>
+    </dialog>
 
     <div id="fatal" role="alert" hidden></div>
 

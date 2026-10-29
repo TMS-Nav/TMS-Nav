@@ -82,7 +82,7 @@ def efield_files(manifest_path):
     if m.get("volume"):
         files.append(m["volume"]["t1"])
     for p in m["poses"]:
-        files += [fn for fn in (p.get("surface"), p.get("volume")) if fn]
+        files += [fn for fn in (p.get("surface"), p.get("surface_normal"), p.get("volume")) if fn]
     return files
 
 

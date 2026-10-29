@@ -1131,6 +1131,58 @@ input[type="range"] {
   border-bottom: none;
 }
 
+/* a second cap's comparison sits right under the first */
+.a2-roi-row.is-cmp-next {
+  border-bottom: none;
+}
+
+/* three placements at most, two to a row, so a label never has to squeeze */
+#a2-methods {
+  flex-wrap: wrap;
+}
+
+#a2-methods button {
+  flex: 1 1 calc(50% - 2px);
+}
+
+/* what the two ends of a signed scale mean, under its numbers */
+.a2-ends {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+.a2-ends span:last-child {
+  text-align: right;
+}
+
+.a2-ticks span:nth-child(2):empty {
+  display: none;
+}
+
+#a2-slice-note {
+  margin-top: 6px;
+}
+
+.a2-didt-note {
+  margin-top: 4px;
+}
+
+#ui label:has(#a2-diff:disabled) {
+  color: #6b7079;
+  cursor: not-allowed;
+}
+
+#a2-diff-hint:empty {
+  display: none;
+}
+
+#a2-diff-hint {
+  margin-top: 2px;
+}
+
 /* phone sized frames. there is no room for a panel beside the head, so an open
    panel lies over the stage instead, and main.js keeps only one open at a time */
 @media (max-width: 760px) {
@@ -1297,4 +1349,225 @@ input[type="range"] {
 
 #mri-panel {
   top: 72px;
+}
+
+/* ---- sources, licenses and disclaimer ---------------------------------------------
+   one quiet link at the foot of the controls opens it, so it is there for anyone who
+   needs to cite or check a license and out of the way for everyone else */
+.credit-link {
+  display: block;
+  margin-top: 6px;
+  padding: 2px 0;
+  background: none;
+  border: none;
+  font: inherit;
+  color: #9ab8de;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: #4a5a72;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.credit-link:hover {
+  color: #c4d7ef;
+  text-decoration-color: currentColor;
+}
+
+#sources {
+  width: min(520px, calc(100vw - 32px));
+  max-height: min(84vh, 760px);
+  max-height: min(84dvh, 760px);
+  margin: auto;
+  padding: 0;
+  color: #e8e8e8;
+  background: #1c1e24;
+  border: 1px solid #3a3d46;
+  border-radius: 10px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+
+#sources[open] {
+  display: flex;
+  flex-direction: column;
+  animation: sources-in 0.16s cubic-bezier(0.2, 0, 0, 1);
+}
+
+#sources::backdrop {
+  background: rgba(10, 11, 14, 0.62);
+}
+
+@keyframes sources-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #sources[open] {
+    animation: none;
+  }
+}
+
+.sources-inner {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.sources-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 14px 12px 22px;
+  border-bottom: 1px solid #2f323a;
+}
+
+.sources-head h2 {
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+.sources-close {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  color: #9aa0aa;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.sources-close:hover {
+  color: #e8e8e8;
+  background: #262932;
+  border-color: #3a3d46;
+}
+
+.sources-body {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 22px 22px;
+  scrollbar-width: thin;
+  scrollbar-color: #3a3d46 transparent;
+}
+
+/* the disclaimer comes first, set off by the accent rule the rest of the viewer
+   uses for the selected thing */
+.sources-note {
+  padding: 1px 0 1px 12px;
+  border-left: 2px solid #1f77b4;
+  margin-bottom: 18px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #c3c7cf;
+}
+
+.sources-body h3 {
+  font-size: 12px;
+  font-weight: 600;
+  color: #9aa0aa;
+  margin: 16px 0 2px;
+}
+
+.sources-note + h3 {
+  margin-top: 0;
+}
+
+/* one source per row: what it is, the paper to cite, its license */
+.src-list {
+  list-style: none;
+}
+
+.src-list li {
+  display: grid;
+  grid-template-columns: 6.5em minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 0;
+  font-size: 13px;
+  border-bottom: 1px solid #262932;
+}
+
+.src-list li:last-child {
+  border-bottom: none;
+}
+
+.sources-body a {
+  color: #9ab8de;
+  text-underline-offset: 3px;
+  text-decoration-color: #4a5a72;
+  overflow-wrap: anywhere;
+}
+
+.sources-body a:hover {
+  color: #c4d7ef;
+  text-decoration-color: currentColor;
+}
+
+/* the license, as a tag. the one with conditions on use is the one that matters to a
+   reader, so it alone gets a colour; the words still say it for anyone who cannot see it */
+.lic {
+  font-size: 11.5px;
+  line-height: 1;
+  padding: 4px 7px;
+  color: #b4b9c2;
+  border: 1px solid #3a3d46;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.sources-body a.lic {
+  color: #b4b9c2;
+  text-decoration: none;
+}
+
+.sources-body a.lic:hover {
+  color: #e8e8e8;
+  border-color: #5a5e6a;
+}
+
+.sources-body a.lic-nc,
+.lic-nc {
+  color: #e3bd74;
+  border-color: #6b5a33;
+  background: rgba(227, 189, 116, 0.07);
+}
+
+.sources-fine {
+  margin-top: 14px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: #8f95a0;
+}
+
+@media (max-width: 520px) {
+  .sources-head {
+    padding-left: 16px;
+  }
+
+  .sources-body {
+    padding: 16px 16px 20px;
+  }
+
+  .src-list li {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .src-list li > :nth-child(2) {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .src-list li .lic {
+    grid-row: 1 / span 2;
+    align-self: center;
+  }
 }

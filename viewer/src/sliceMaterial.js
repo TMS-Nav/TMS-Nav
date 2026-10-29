@@ -2,9 +2,11 @@
 // and |E| volumes at every fragment, so the picture follows the plane wherever it is
 // moved. both volumes are uint8 3d textures on the same grid (efield/export_web.py),
 // the field already divided by the colour scale's top, so 1.0 is the top colour.
+// in difference mode a second field volume is taken away from the first and the
+// result is coloured on the diverging map instead
 import * as THREE from "three";
 
-import { turboTable } from "./colormap.mjs";
+import { divergingTable, turboTable } from "./colormap.mjs";
 
 const vertexShader = /* glsl */ `
   varying vec3 vWorld;
@@ -19,7 +21,11 @@ const fragmentShader = /* glsl */ `
   precision highp sampler3D;
   uniform sampler3D t1;
   uniform sampler3D field;
+  uniform sampler3D field2;
   uniform sampler2D lut;
+  uniform sampler2D lut2;
+  uniform float mode;
+  uniform float diffScale;
   uniform mat4 rasToTex;
   uniform float cut;
   uniform float showField;
@@ -34,8 +40,18 @@ const fragmentShader = /* glsl */ `
     float e = texture(field, tc).r;
     // fade the colour in just above the cut rather than switching it on, so the
     // edge of the hotspot reads as a gradient, not a stencil
-    float a = smoothstep(cut, cut + 0.12, e) * showField;
-    vec3 col = mix(vec3(g * 0.92), texture(lut, vec2(e, 0.5)).rgb, a * 0.88);
+    float a;
+    vec3 c;
+    if (mode > 0.5) {
+      // field minus field2, in units of the symmetric scale's top
+      float d = (e - texture(field2, tc).r) * diffScale;
+      a = smoothstep(cut, cut + 0.12, abs(d)) * showField;
+      c = texture(lut2, vec2(clamp(d * 0.5 + 0.5, 0.0, 1.0), 0.5)).rgb;
+    } else {
+      a = smoothstep(cut, cut + 0.12, e) * showField;
+      c = texture(lut, vec2(e, 0.5)).rgb;
+    }
+    vec3 col = mix(vec3(g * 0.92), c, a * 0.88);
     gl_FragColor = vec4(col, 1.0);
   }
 `;
@@ -45,8 +61,8 @@ const fragmentShader = /* glsl */ `
  * space on purpose: the shader writes these bytes straight out, as is the t1 grey,
  * so the slice shows the colormap's own sRGB values with no conversion either way
  */
-export function makeLutTexture() {
-  const tex = new THREE.DataTexture(turboTable(256), 256, 1, THREE.RGBAFormat);
+export function makeLutTexture(table = turboTable(256)) {
+  const tex = new THREE.DataTexture(table, 256, 1, THREE.RGBAFormat);
   tex.magFilter = THREE.LinearFilter;
   tex.minFilter = THREE.LinearFilter;
   tex.needsUpdate = true;
@@ -78,12 +94,21 @@ export function rasToTexMatrix(affineRows, dims) {
   return toTex.multiply(affine.invert());
 }
 
-export function createSliceMaterial({ t1, field, lut, rasToTex }) {
+/** the diverging lookup, for a difference on the slice. */
+export function makeDivergingLutTexture() {
+  return makeLutTexture(divergingTable(256));
+}
+
+export function createSliceMaterial({ t1, field, lut, lut2, rasToTex }) {
   return new THREE.ShaderMaterial({
     uniforms: {
       t1: { value: t1 },
       field: { value: field },
+      field2: { value: field },
       lut: { value: lut },
+      lut2: { value: lut2 || lut },
+      mode: { value: 0.0 },
+      diffScale: { value: 1.0 },
       rasToTex: { value: rasToTex },
       cut: { value: 0.2 },
       showField: { value: 1.0 },

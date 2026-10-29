@@ -44,3 +44,43 @@ export function turboGradient(stops = 12) {
   }
   return `linear-gradient(90deg, ${parts.join(", ")})`;
 }
+
+// the signed maps, the perpendicular field and a difference between two placements,
+// go blue below zero and red above it. ColorBrewer's RdBu (Brewer, Apache 2.0) with
+// its two darkest ends left off, they sink into the dark panel and the black slice,
+// and its two palest steps either side of zero left off too. values that small sit
+// under the colour cut anyway, and with them in, everything just past the cut came
+// out a washed pastel on the grey cortex
+const DIVERGING = [
+  [0x21, 0x66, 0xac], [0x43, 0x93, 0xc3], [0x92, 0xc5, 0xde], [0xec, 0xef, 0xf1],
+  [0xf4, 0xa5, 0x82], [0xd6, 0x60, 0x4d], [0xb2, 0x18, 0x2b],
+].map((c) => c.map((v) => v / 255));
+
+/** the diverging map at s in [-1, 1], blue at -1, near white at 0, red at +1, as [r, g, b]. */
+export function diverging(s) {
+  const x = clamp01((s + 1) / 2) * (DIVERGING.length - 1);
+  const i = Math.min(Math.floor(x), DIVERGING.length - 2);
+  const f = x - i;
+  const a = DIVERGING[i], b = DIVERGING[i + 1];
+  return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+}
+
+/** n rows of the diverging map as rgba bytes, -1 in the first row and +1 in the last. */
+export function divergingTable(n = 256) {
+  const out = new Uint8Array(n * 4);
+  for (let i = 0; i < n; i++) {
+    const [r, g, b] = diverging((2 * i) / (n - 1) - 1);
+    out.set([Math.round(r * 255), Math.round(g * 255), Math.round(b * 255), 255], i * 4);
+  }
+  return out;
+}
+
+/** a css linear-gradient running the diverging map left to right. */
+export function divergingGradient(stops = 12) {
+  const parts = [];
+  for (let i = 0; i <= stops; i++) {
+    const [r, g, b] = diverging((2 * i) / stops - 1).map((v) => Math.round(v * 255));
+    parts.push(`rgb(${r} ${g} ${b}) ${((i / stops) * 100).toFixed(1)}%`);
+  }
+  return `linear-gradient(90deg, ${parts.join(", ")})`;
+}

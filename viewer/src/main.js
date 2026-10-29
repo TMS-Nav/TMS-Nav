@@ -11,6 +11,7 @@ import { defaultDatasetKey, isTemplateDataset, loadDatasetAssets } from "./datas
 import { createAim2View } from "./aim2.js";
 import { createLandmarkEditor } from "./landmarkEditor.js";
 import { createSubjectReview } from "./subjectReview.js";
+import { initSources } from "./sources.js";
 
 // the middle column between the two side panels. everything is sized off this box,
 // not the window, so hiding a panel recentres the head
@@ -27,6 +28,9 @@ scene.background = new THREE.Color(0x15171c);
 // z up, ras convention, so our meshes come in the right way round
 const camera = new THREE.PerspectiveCamera(45, aspect(), 0.1, 10000);
 camera.up.set(0, 0, 1);
+
+// before anything that needs webgl, so the credits open even when the head cannot
+initSources();
 
 const canvas = document.getElementById("c");
 
