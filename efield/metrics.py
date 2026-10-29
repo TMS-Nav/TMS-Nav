@@ -2,7 +2,10 @@
 #
 # the runner leaves one block per pose with the roi numbers in it. here the eeg
 # and mri poses at the same site and rep are paired up and the differences the
-# proposal names are computed:
+# proposal names are computed. there are two eeg placements, the two methods of
+# the proposal: EEG is the cap placement brainsight recorded (method 1), RECON
+# the one built off the mri reconstruction of the cap (method 2). each is paired
+# with the same mri guided placement and comes out as EEG-MRI or RECON-MRI:
 #
 #   pct_diff_mean_roi   percentage difference in mean roi |E|, eeg vs mri, the
 #                       PRIMARY endpoint. (eeg - mri) / mri * 100
@@ -40,11 +43,15 @@ CSV_COLUMNS = ("subject", "site", "method", "rep", "metric", "value")
 
 
 def dice(a, b):
-    """Dice overlap of two index sets, 1 when identical, 0 when disjoint."""
+    """Dice overlap of two index sets, 1 when identical, 0 when disjoint.
+
+    nan when both are empty. two empty hotspots (a cut neither field reaches)
+    say nothing about overlap, and 1.0 would read as a perfect match
+    """
 
     a, b = set(int(i) for i in a), set(int(i) for i in b)
     if not a and not b:
-        return 1.0
+        return float("nan")
     return 2.0 * len(a & b) / (len(a) + len(b))
 
 
@@ -69,29 +76,34 @@ def roi_for_site(entry, site):
     return None
 
 
-def pair_poses(results):
-    """{(site, eeg rep): {'EEG': block, 'MRI': block}} from a results.json dict.
+# the cap placements, each compared with the mri guided one
+CAP_METHODS = ("EEG", "RECON")
 
-    each eeg placement is paired with the mri guided placement of the same rep.
-    when the mri side has only one placement at a site, every eeg rep is paired
-    with that one. the same rule src/aim1.py uses for the geometry
+
+def pair_poses(results):
+    """{(site, cap method, rep): {'EEG': block, 'MRI': block}} from a results.json dict.
+
+    each cap placement, EEG or RECON, is paired with the mri guided placement of
+    the same rep. when the mri side has only one placement at a site, every cap
+    rep is paired with that one. the same rule src/aim1.py uses for the geometry
     """
 
     by = {}
     for entry in results.get("poses", []):
         block = roi_for_site(entry, entry.get("site", ""))
-        if block is None or entry.get("method") not in ("EEG", "MRI"):
+        if block is None or entry.get("method") not in CAP_METHODS + ("MRI",):
             continue
         by.setdefault(entry["site"], {}).setdefault(entry["method"], {})[int(entry.get("rep", 0))] = block
 
     pairs = {}
     for site, methods in by.items():
-        eeg, mri = methods.get("EEG", {}), methods.get("MRI", {})
+        mri = methods.get("MRI", {})
         only = next(iter(mri.values())) if len(mri) == 1 else None
-        for rep, e in eeg.items():
-            m = mri.get(rep, only)
-            if m is not None:
-                pairs[(site, rep)] = {"EEG": e, "MRI": m}
+        for cap in CAP_METHODS:
+            for rep, e in methods.get(cap, {}).items():
+                m = mri.get(rep, only)
+                if m is not None:
+                    pairs[(site, cap, rep)] = {"EEG": e, "MRI": m}
     return pairs
 
 
@@ -124,10 +136,12 @@ def long_rows(results):
             if m in block:
                 rows.append({"subject": subject, "site": entry["site"], "method": entry["method"],
                              "rep": int(entry.get("rep", 0)), "metric": m, "value": float(block[m])})
-    for (site, rep), methods in pair_poses(results).items():
+    for (site, cap, rep), methods in pair_poses(results).items():
         for m, v in paired_metrics(methods["EEG"], methods["MRI"]).items():
-            rows.append({"subject": subject, "site": site, "method": "EEG-MRI", "rep": rep,
-                         "metric": m, "value": float(v)})
+            # an overlap with no hotspot on either side has no value, leave it out
+            if np.isfinite(v):
+                rows.append({"subject": subject, "site": site, "method": f"{cap}-MRI", "rep": rep,
+                             "metric": m, "value": float(v)})
     return rows
 
 
@@ -162,18 +176,19 @@ def subject_means(rows, metric, method="EEG-MRI"):
     return {site: {s: float(np.mean(v)) for s, v in subs.items()} for site, subs in acc.items()}
 
 
-def site_stats(rows, margin=PCT_MARGIN):
+def site_stats(rows, margin=PCT_MARGIN, cap="EEG"):
     """Per site: tost, paired t and bland altman on the subject level primary endpoint.
 
     the paired difference is already in the rows as pct_diff_mean_roi, one per
     rep, averaged to one per subject first so n is subjects, see src/stats.
     bland altman is on the raw mean |E| so its units are V/m. all three are the
-    statsmodels helpers in src/stats.py, the same ones aim 1 uses
+    statsmodels helpers in src/stats.py, the same ones aim 1 uses. cap picks the
+    method, EEG (brainsight, method 1) or RECON (mri reconstruction, method 2)
     """
 
     out = {}
-    pct = subject_means(rows, "pct_diff_mean_roi")
-    eeg = subject_means(rows, "mean_E_magn", "EEG")
+    pct = subject_means(rows, "pct_diff_mean_roi", f"{cap}-MRI")
+    eeg = subject_means(rows, "mean_E_magn", cap)
     mri = subject_means(rows, "mean_E_magn", "MRI")
     for site, subs in pct.items():
         values = np.array(list(subs.values()))

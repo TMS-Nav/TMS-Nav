@@ -3,6 +3,13 @@ export function isTemplateDataset(key, dataset) {
   return key === 'MNI152' && dataset.markers?.coordinate_frame?.name !== 'subject_RAS';
 }
 
+// The template and the public sample heads (registry kind "sample", the SimNIBS
+// example heads) carry the simulated Aim 1 layers: targets, coil and Monte Carlo.
+// A scan of a person never does.
+export function isDemoDataset(key, dataset) {
+  return isTemplateDataset(key, dataset) || dataset.kind === 'sample';
+}
+
 export function defaultDatasetKey(datasets) {
   return datasets.MNI152 ? 'MNI152' : Object.keys(datasets)[0];
 }

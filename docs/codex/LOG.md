@@ -54,3 +54,31 @@ rather than assuming it from this log.
 - Main and fetched origin/main matched at base **07fe146** before the `[codex]` delivery commit. Verify final commit/push directly; see Git history for the resulting task hash.
 
 - Final synthetic visual QC isolated a non-preserved WebGL/MSAA reset capture artifact. MRI now retains complete frames without MSAA; a browser pixel check covers both halves of the sagittal phantom after reset.
+
+## 2026-10-29 — Viewer sources dialog and Aim 2 forward model review
+
+- Added a sources, licenses and disclaimer `<dialog>` opened from the left-panel credit: `viewer/src/sources.js`, `index.html`, `style.css`, `tests/browser/sources.spec.mjs`.
+- Verified `npm test` (21 passed), a scratch production build, and the dialog by hand in the in-app browser (desktop and 375 px; Escape, backdrop, close and focus return all work). The Playwright spec was not run because the browser binaries are missing.
+- Reread the proposal for the PI's "integrate the forward model" goal. The SimNIBS forward model is wired for Brainsight poses (Method 1). Method 2 poses from the MRI reconstruction are not connected. Details in `docs/aim2-integration-report.md`.
+- Checked the DOIs for Lepping 2016 and Thielscher 2015 online. The others still need a spot check.
+
+## 2026-10-29 — Method 2 forward model, difference map, perpendicular field, coil current
+
+- Method 2 connected: `efield/reconstruction.py` (RECON poses from the cap reconstruction, over-target MRI pose), `runner_simnibs.place_over_target`, `run_efield.py` subjects from reconstructions too. Pairs `RECON-MRI` alongside `EEG-MRI`; Dice NaN when both hotspots are empty.
+- Ernie demo now uses the Aim 1 pipeline's own 10-20 sites (RECON) and Aim 1 targets (MRI over target). Real SimNIBS run of 4 poses passed; SMA −25.5 %, F4 −4.3 % mean |E| in the target. Old demo output kept in `saves/efield/demo_ernie_2026-10-22/`.
+- Export writes E_normal per pose; viewer gains strength/perpendicular, minus-MRI-guided difference (diverging RdBu), coil current scaling. Sources dialog cut to one row per source.
+- Verified: pytest 83 passed (incl. SimNIBS dry run with over-target pose), npm test 26 passed, scratch build passed, browser checks desktop and 375 px. Playwright not run (browsers missing).
+
+## 2026-10-29 — PI follow-up: run the E-field on another machine
+
+- Fast-forwarded main_ar to origin/main 78fce6b (PR #3 merge, no file changes).
+- PI could not run the simulation: `efield/config.py` hard-coded this machine's SimNIBS and sample paths. Now: `TMSNAV_SIMNIBS_DIR` → `simnibs_python` on PATH → usual install folders; `.cmd` only on Windows; sample heads searched under `saves/sample_data/` and the sibling `Sample Datasets/`.
+- Added `scripts/fetch_sample_data.py` (SimNIBS example 1.1 GB, group 2.7 GB, from the SimNIBS datasets page) and `docs/efield.md`; `efield/README.md` points there. `sample_data` added to scan discovery exclusions.
+- Verified: pytest 86 passed, npm test 26 passed, demo dry run, missing-SimNIBS message. Real downloads not run.
+
+## 2026-10-29 — gh-pages redeploy and sample heads in Aim 1
+
+- Deployed main_ar 34a8f20 to gh-pages (a698659), checked live.
+- User found Ernie and T1–T5 showed no Aim 1 targets, coil or Monte Carlo. Cause: since 07fe146 only MNI152 counted as a demo; every other head was treated as a patient scan. `write_registry` now marks heads on `public-subjects.json` (other than MNI152) as kind `sample`; the viewer's `isDemoDataset` gives them the demo layers and skips the cap-review API (removes the public-site 404).
+- Aim 2 for MNI152 and T1–T5 left as "no e-field yet" at the user's choice; no simulations run for them.
+- Verified: pytest 87 passed, npm test 27 passed, build passed, local viewer Ernie/T3/MNI152 Aim 1 metrics and layers.

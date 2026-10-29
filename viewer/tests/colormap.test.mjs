@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { turbo, turboGradient, turboTable } from "../src/colormap.mjs";
+import { diverging, divergingTable, turbo, turboGradient, turboTable } from "../src/colormap.mjs";
 
 const close = (a, b, tol = 0.02) => a.every((v, i) => Math.abs(v - b[i]) <= tol);
 
@@ -30,4 +30,17 @@ test("table and gradient come out the right shape", () => {
   assert.equal(t.length, 64);
   assert.equal(t[3], 255);
   assert.match(turboGradient(4), /^linear-gradient\(90deg, rgb\(\d+ \d+ \d+\) 0\.0%, .* 100\.0%\)$/);
+});
+
+test("diverging is blue below zero, near white at zero, red above, and clamps", () => {
+  const [r1, , b1] = diverging(-0.8);
+  const [r3, , b3] = diverging(0.8);
+  assert.ok(b1 > r1, "negative end is blue");
+  assert.ok(r3 > b3, "positive end is red");
+  assert.ok(Math.min(...diverging(0)) > 0.9, `${diverging(0)}`);
+  assert.deepEqual(diverging(-3), diverging(-1));
+  assert.deepEqual(diverging(3), diverging(1));
+  const t = divergingTable(8);
+  assert.equal(t.length, 32);
+  assert.ok(t[2] > t[0], "first row is the blue end");
 });

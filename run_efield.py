@@ -9,11 +9,19 @@
 #   python run_efield.py --run                 actually simulate, only on purpose
 #   python run_efield.py --charm               actually build missing head models, same
 #
+# the cap placement comes two ways, the two methods of the proposal. method 1
+# is the one brainsight recorded (EEG), method 2 the one built off the mri
+# reconstruction of the cap (RECON, efield/reconstruction.py). both are scored
+# against the same mri guided placement and roi.
+#
 # what each subject needs. when a piece is missing the subject or site is
 # skipped and the reason printed, nothing is made up in its place:
 #   saves/brainsight/sub-<ID>_coil_pose_samples.txt   the recorded poses, exported in
 #       NIfTI:Aligned, samples named sub-<ID>_EEGCAP_<SITE>_POSE_REP<n> and
-#       sub-<ID>_MRI_<SITE>_POSE_REP<n>
+#       sub-<ID>_MRI_<SITE>_POSE_REP<n>. method 1, and the mri guided pose
+#   saves/derivatives/subjects/<ID>/markers.json        the cap reconstruction with
+#       confirmed anchors, method 2. with no brainsight mri pose the coil is put
+#       on the scalp over the r01 target instead
 #   saves/fmri_targets.csv                            the r01 target per site, subject
 #                                                     column sub-<ID>
 #   saves/m2m/m2m_sub-<ID>                            the head model, charm run on the
@@ -27,7 +35,8 @@ from efield.config import FMRI_TARGETS
 from efield.headmodel import find_m2m, format_command, run_charm
 from efield.job import Job, dryrun_path, results_path, runner_command
 from efield.metrics import format_site_stats, load_results, long_rows, site_stats, write_csv
-from efield.poses import displacement_mm, orientation_deg, tilt_deg
+from efield.poses import CoilPose, displacement_mm, orientation_deg, tilt_deg
+from efield.reconstruction import method2_poses, reconstructed_subjects
 from efield.roi import load_target_table, rois_for_subject
 from src.aim1 import export_files
 from src.mri_inputs import SAVE_DIR, find_mris
@@ -128,27 +137,36 @@ def head_model(subject, args):
 # --- one subject --------------------------------------------------------------------
 def process(subject, poses, source, args, rows, targets):
     print(f"\n=== {subject} ===")
-    print(f"  poses from {', '.join(source)}: {len(poses)}")
-
-    # the pose to pose numbers aim 1 also reports, here on the same poses
-    by_key = {p.key(): p for p in poses}
-    for site in sorted({p.site for p in poses}):
-        for rep in sorted({p.rep for p in poses if p.site == site and p.method == "EEG"}):
-            a = by_key.get((site, "EEG", rep))
-            b = by_key.get((site, "MRI", rep))
-            if b is None:
-                mri = [p for p in poses if p.site == site and p.method == "MRI"]
-                b = mri[0] if len(mri) == 1 else None
-            if a and b:
-                print(f"  {site:4s} eeg rep {rep} vs mri rep {b.rep}  {displacement_mm(a, b):.1f} mm, "
-                      f"tilt {tilt_deg(a, b):.1f} deg, orientation {orientation_deg(a, b):.1f} deg")
+    print(f"  poses from {', '.join(source) or 'no brainsight export'}: {len(poses)}")
 
     # the roi is the r01 target. a site without one is not simulated, the field
-    # would have nowhere meaningful to be read
-    rois, missing = rois_for_subject(subject, poses, table=targets)
+    # would have nowhere meaningful to be read. method 2 places off the targets,
+    # so a subject with no recorded poses has every protocol site looked up
+    site_poses = poses or [CoilPose(centre=[0, 0, 0], ydir=[0, -1, 0], zdir=[0, 0, -1], site=s)
+                           for s in SITES]
+    rois, missing = rois_for_subject(subject, site_poses, table=targets)
     if missing:
         print(f"  no r01 target for {', '.join(missing)} in {args.fmri_targets}, not simulated")
         poses = [p for p in poses if p.site not in missing]
+    if not args.no_recon:
+        poses = poses + method2_poses(subject, poses, rois, root=args.derivative_root)
+
+    # the pose to pose numbers aim 1 also reports, here on the same poses. an
+    # mri pose still waiting to be put over its target has no position yet
+    by_key = {p.key(): p for p in poses}
+    for site in sorted({p.site for p in poses}):
+        mri = [p for p in poses if p.site == site and p.method == "MRI"]
+        for cap in ("EEG", "RECON"):
+            for rep in sorted({p.rep for p in poses if p.site == site and p.method == cap}):
+                a = by_key.get((site, cap, rep))
+                b = by_key.get((site, "MRI", rep)) or (mri[0] if len(mri) == 1 else None)
+                if a and b and b.extra.get("place") != "over_target":
+                    print(f"  {site:4s} {cap.lower()} rep {rep} vs mri rep {b.rep}  {displacement_mm(a, b):.1f} mm, "
+                          f"tilt {tilt_deg(a, b):.1f} deg, orientation {orientation_deg(a, b):.1f} deg")
+
+    if not any(p.method in ("EEG", "RECON") for p in poses):
+        print("  no cap placement to compare, nothing simulated")
+        return
     if not poses:
         print("  nothing left to simulate")
         return
@@ -161,8 +179,8 @@ def process(subject, poses, source, args, rows, targets):
     if m2m is None:
         return
 
-    job = Job(subject=subject, m2m=str(m2m.path), poses=poses, rois=rois,
-              poses_source=", ".join(source))
+    used = list(source) + (["cap reconstruction (method 2)"] if any(p.method == "RECON" for p in poses) else [])
+    job = Job(subject=subject, m2m=str(m2m.path), poses=poses, rois=rois, poses_source=", ".join(used))
     job_path = job.write_json()
     print(job.summary())
     print(f"  wrote {job_path}")
@@ -170,7 +188,8 @@ def process(subject, poses, source, args, rows, targets):
     if args.no_runner:
         print("  --no-runner, job written only")
     elif not config.simnibs_available():
-        print(f"  simnibs python not found at {config.SIMNIBS_PYTHON}, runner not called")
+        print(f"  simnibs python not found at {config.SIMNIBS_PYTHON}, runner not called."
+              " install simnibs or set TMSNAV_SIMNIBS_DIR (docs/efield.md)")
     else:
         cmd = runner_command(job_path, dry_run=not args.run)
         print(f"  {'RUNNING' if args.run else 'dry run'}: {format_command(cmd)}")
@@ -196,6 +215,9 @@ def main(argv=None):
     ap.add_argument("--subjects", nargs="*", help="subject ids, 001 or sub-001, default every subject in the exports")
     ap.add_argument("--m2m-root", default=str(config.M2M_ROOT), help="where m2m_sub-<ID> folders live")
     ap.add_argument("--brainsight-root", default=str(config.BRAINSIGHT_ROOT))
+    ap.add_argument("--derivative-root", default=str(config.DERIVATIVE_ROOT),
+                    help="where the cap reconstructions (<ID>/markers.json) are, method 2")
+    ap.add_argument("--no-recon", action="store_true", help="method 1 only, leave the cap reconstructions out")
     ap.add_argument("--fmri-targets", default=str(FMRI_TARGETS),
                     help="csv of the r01 targets, see efield/fmri_targets_example.csv")
     ap.add_argument("--dry-run", action="store_true", help="the default, accepted for clarity")
@@ -221,6 +243,11 @@ def main(argv=None):
 
     print(f"brainsight       {args.brainsight_root}")
     by_subject, sources = load_poses(args.brainsight_root)
+    recon = [] if args.no_recon else reconstructed_subjects(args.derivative_root)
+    print(f"reconstructions  {len(recon)} in {args.derivative_root}")
+    for s in recon:
+        by_subject.setdefault(s, [])
+        sources.setdefault(s, [])
     subjects = sorted(by_subject)
     if args.subjects:
         wanted = [subject_id(s) for s in args.subjects]
@@ -229,7 +256,8 @@ def main(argv=None):
                 print(f"  {s}: no poses in any export")
         subjects = [s for s in wanted if s in by_subject]
     if not subjects:
-        print(f"no subjects, no protocol named SMA or F4 poses in {args.brainsight_root}")
+        print(f"no subjects, no protocol named SMA or F4 poses in {args.brainsight_root}"
+              f" and no cap reconstruction in {args.derivative_root}")
         return
     print(f"subjects         {', '.join(subjects)}")
 
@@ -241,7 +269,10 @@ def main(argv=None):
     if rows:
         out = write_csv(rows, config.SIM_ROOT / "efield_long.csv")
         print(f"wrote {out} ({len(rows)} rows)")
-        print(format_site_stats(site_stats(rows)))
+        for cap in ("EEG", "RECON"):
+            if any(r["method"] == f"{cap}-MRI" for r in rows):
+                print(f"{cap}-MRI")
+                print(format_site_stats(site_stats(rows, cap=cap)))
     else:
         print("no results.json anywhere yet, so no long table. run with --run to simulate.")
 

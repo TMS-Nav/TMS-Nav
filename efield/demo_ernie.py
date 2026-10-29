@@ -3,14 +3,16 @@
 #   python -m efield.demo_ernie            write the job, run simnibs, then export
 #   python -m efield.demo_ernie --dry-run  write the job and only dry run it
 #
-# nothing here is study data. the coil sits on ernie's own 10-10 cap at F4 and
-# at FCz for the SMA (the study puts SMA at the arc midpoint of Fz and Cz, which
-# is where 10-10 puts FCz), with handle directions picked for the demo, not the
-# protocol's. the roi seed is the electrode pushed straight into the head, not an
-# fmri target. run_efield.py never reads this, the study pipeline stays real
-# data only. the export lands in viewer/src/data/Ernie, next to ernie's aim 1 files
+# the two placements come out of this project's own pipeline, the way method 2
+# of the study does it. the eeg cap placement is the 10-20 site the aim 1
+# pipeline built off ernie's scalp (markers.json electrodes), RECON. the mri
+# guided placement goes on the scalp straight over the target, which here is
+# aim 1's anatomical target pushed in to the cortex, not an fmri target. the
+# runner puts that coil on the skin (place = over_target). handle directions are
+# config.HANDLE_DIRECTIONS for both. nothing here is study data and run_efield.py
+# never reads it. the export lands in viewer/src/data/Ernie, next to ernie's aim 1
+# files, which are on the same t1
 import argparse
-import csv
 import subprocess
 import sys
 
@@ -19,21 +21,16 @@ import numpy as np
 from efield import config
 from efield.headmodel import format_command
 from efield.job import Job, runner_command
-from efield.poses import CoilPose
+from efield.reconstruction import cap_poses, load_markers, over_target_pose
 from efield.roi import RoiSpec
 
 SUBJECT = "demo_ernie"
 VIEWER_SUBJECT = "Ernie"
-CAP = "EEG10-10_UI_Jurak_2007.csv"
+MARKERS = config.ROOT / "viewer" / "src" / "data" / VIEWER_SUBJECT / "markers.json"
+SITES = ("F4", "SMA")
 
-# site, electrode under the coil centre, electrode the handle points at
-POSES = [
-    ("F4", "F4", "FC2"),
-    ("SMA", "FCz", "Cz"),
-]
-
-# how far below the electrode the roi seed goes. scalp to the middle of the grey
-# matter is roughly this on ernie, so the snap onto the central surface is short
+# how far below the scalp target the roi seed goes. scalp to the middle of the
+# grey matter is roughly this on ernie, so the snap onto the central surface is short
 ROI_DEPTH_MM = 18.0
 
 
@@ -45,38 +42,31 @@ def m2m_ernie():
     return None
 
 
-def read_cap(m2m):
-    """Electrode name -> RAS mm, off the cap file charm wrote for this head."""
-
-    out = {}
-    with open(m2m / "eeg_positions" / CAP, newline="") as f:
-        for row in csv.reader(f):
-            if len(row) >= 5 and row[0] in ("Electrode", "ReferenceElectrode"):
-                out[row[4].strip()] = np.array([float(v) for v in row[1:4]])
-    return out
-
-
-def build_job(m2m):
-    cap = read_cap(m2m)
-    # the cap's centroid sits inside the head, good enough for "inwards" here.
-    # the runner snaps each coil onto the real skin with the real normal anyway
-    inside = np.mean(np.stack(list(cap.values())), axis=0)
-    poses, rois = [], []
-    for site, centre_el, handle_el in POSES:
-        c = cap[centre_el]
-        inward = (inside - c) / np.linalg.norm(inside - c)
-        handle = cap[handle_el] - c
-        # placed off the cap, so it is an eeg cap placement in the study's terms
-        poses.append(CoilPose(centre=c, ydir=handle, zdir=inward, site=site, method="EEG", rep=1,
-                              name=f"demo_{site}", extra={"demo": True, "electrode": centre_el,
-                                                          "handle_towards": handle_el}))
-        rois.append(RoiSpec(kind="fmri_target", centre=list(c + inward * ROI_DEPTH_MM), site=site,
-                            reference_method="demo, electrode pushed in",
+def build_job(m2m, markers_path=MARKERS):
+    markers = load_markers(markers_path)
+    targets = {m["label"]: m for m in markers["targets"]}
+    rois = []
+    for site in SITES:
+        t = targets[site]
+        seed = np.asarray(t["position"], dtype=float) - np.asarray(t["normal"], dtype=float) * ROI_DEPTH_MM
+        rois.append(RoiSpec(kind="fmri_target", centre=[float(x) for x in seed], site=site,
+                            reference_method="demo, aim 1 target pushed in",
                             name=f"{site}_demo_{config.ROI_RADIUS_MM:g}mm"))
-    return Job(subject=SUBJECT, m2m=str(m2m), poses=poses, rois=rois, map_to_vol=True,
-               snap_to_skin=True, poses_source=f"DEMO, ernie's {CAP}",
-               notes=["demo only: poses on ernie's 10-10 cap, handle directions chosen for the demo",
-                      "roi seeds are electrodes pushed in, not fmri targets"])
+    # aim 1's sample heads come out of run_pipeline.py with no review status on
+    # the cap, so the demo does not ask for one. run_efield.py does
+    recon, missing = cap_poses(markers, SUBJECT, SITES, require_status=None)
+    if missing:
+        raise ValueError(f"ernie's markers.json has no electrode for {', '.join(missing)}")
+    mri = [over_target_pose(r, SUBJECT) for r in rois]
+    for p in mri + recon:
+        p.name = f"demo_{p.site}_{p.method}"
+        p.extra["demo"] = True
+    return Job(subject=SUBJECT, m2m=str(m2m), poses=mri + recon, rois=rois, map_to_vol=True,
+               snap_to_skin=True, poses_source=f"DEMO, {markers_path.name} of the aim 1 pipeline",
+               notes=["demo only: the eeg cap placement is the aim 1 pipeline's 10-20 site on ernie,"
+                      " the mri guided one sits over aim 1's anatomical target",
+                      "roi seeds are aim 1 targets pushed in, not fmri targets",
+                      "handle directions are config.HANDLE_DIRECTIONS, a placeholder convention"])
 
 
 def main(argv=None):
@@ -87,10 +77,16 @@ def main(argv=None):
 
     m2m = m2m_ernie()
     if m2m is None:
-        print("m2m_ernie not found under", ", ".join(str(r) for r in config.SAMPLE_M2M_ROOTS))
+        print("m2m_ernie not found under", ", ".join(str(r) for r in config.SAMPLE_M2M_ROOTS) or "any sample folder")
+        print("fetch it with: python scripts/fetch_sample_data.py  (see docs/efield.md)")
+        return 1
+    if not MARKERS.exists():
+        # the cap placements come off aim 1's reconstruction of ernie
+        print(f"{MARKERS} is missing. build ernie's aim 1 files first: python run_pipeline.py saves/Ernie.nii.gz")
         return 1
     if not config.simnibs_available():
         print(f"simnibs python not found at {config.SIMNIBS_PYTHON}")
+        print("install simnibs, or set TMSNAV_SIMNIBS_DIR to its folder (see docs/efield.md)")
         return 1
 
     job = build_job(m2m)

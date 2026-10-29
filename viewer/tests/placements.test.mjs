@@ -34,3 +34,12 @@ test("no comparison without both placements", () => {
   assert.equal(eegVsMri([pose("F4", "EEG", 1, 1)], "F4"), null);
   assert.equal(eegVsMri([pose("F4", "MRI", 1, 1)], "F4"), null);
 });
+
+test("the reconstructed cap pairs with mri guided on its own", () => {
+  const poses = [pose("F4", "MRI", 1, 1.0), pose("F4", "EEG", 1, 0.9), pose("F4", "RECON", 1, 0.5)];
+  assert.ok(Math.abs(eegVsMri(poses, "F4").pct - -10) < 1e-9);
+  assert.ok(Math.abs(eegVsMri(poses, "F4", "RECON").pct - -50) < 1e-9);
+  assert.deepEqual(placementsAt(poses, "F4").map((p) => p.label), ["MRI-guided", "EEG cap", "Cap from MRI"]);
+  assert.equal(mriPartner(poses, poses[2]), poses[0]);
+  assert.equal(mriPartner(poses, poses[0]), null, "mri guided has no partner of its own");
+});

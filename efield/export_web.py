@@ -7,6 +7,10 @@
 #
 #   cortex.ply              the gm central surface, decimated, RAS mm
 #   efield_<pose>.f32       |E| per cortex vertex, float32, one file per pose
+#   normal_<pose>.f32       E_normal per cortex vertex, float32, signed. simnibs
+#                           takes it as E . the central surface's node normal,
+#                           which points out of the cortex, so positive is a
+#                           field pointing out of the cortex, negative into it
 #   t1.u8                   the t1, cropped to the head and resampled, uint8
 #   field_<pose>.u8         |E| on the same grid, uint8, grey and white matter only
 #   manifest.json           what all of the above is, grid, scale, roi numbers
@@ -81,9 +85,25 @@ def export_cortex(npz_paths, names, out_dir, faces=WEB_CORTEX_FACES):
         e = nearest_values(d["nodes"], d["E_magn"], web.points).astype("<f4")
         fname = f"efield_{name}.f32"
         e.tofile(out_dir / fname)
+        en = nearest_values(d["nodes"], d["E_normal"], web.points).astype("<f4")
+        nname = f"normal_{name}.f32"
+        en.tofile(out_dir / nname)
         out["poses"][name] = {"file": fname, "peak": float(np.max(d["E_magn"])),
-                              "p_color": float(np.percentile(d["E_magn"], COLOR_PCT))}
+                              "p_color": float(np.percentile(d["E_magn"], COLOR_PCT)),
+                              "normal_file": nname,
+                              "normal_p_color": float(np.percentile(np.abs(d["E_normal"]), COLOR_PCT))}
     return out
+
+
+# what a previous export of a subject leaves behind, one file per pose. cleared
+# before every export so a pose that was renamed or dropped does not linger
+POSE_FILES = ("efield_*.f32", "normal_*.f32", "field_*.u8")
+
+
+def clear_pose_files(out_dir):
+    for pattern in POSE_FILES:
+        for f in Path(out_dir).glob(pattern):
+            f.unlink()
 
 
 # --- volumes -------------------------------------------------------------------
@@ -196,7 +216,8 @@ def _pose_roi(entry, job, dry):
             centre = next((r.get("centre_snapped") for r in dry.get("rois", []) if r["name"] == name), None)
         radius = next((r["radius_mm"] for r in job.get("rois", []) if r["name"] == name), None)
         return {"name": name, "centre": centre, "radius_mm": radius,
-                "mean_E_magn": m["mean_E_magn"], "peak_E_magn": m["peak_E_magn"]}
+                "mean_E_magn": m["mean_E_magn"], "peak_E_magn": m["peak_E_magn"],
+                "max_abs_E_normal": m.get("max_abs_E_normal")}
     return None
 
 
@@ -227,6 +248,7 @@ def export_subject(job_dir, viewer_subject, demo=False, out_root=VIEWER_DATA_DIR
         raise ValueError(f"{job_dir / 'results.json'} has no surface dumps, rerun the runner")
     names = [p["name"] for p in poses]
     out_dir = Path(out_root) / viewer_subject / "efield"
+    clear_pose_files(out_dir)
 
     cortex = export_cortex([p["surface_npz"] for p in poses], names, out_dir)
     # one colour scale for every pose of the subject, so two poses compare by eye
@@ -247,6 +269,9 @@ def export_subject(job_dir, viewer_subject, demo=False, out_root=VIEWER_DATA_DIR
         "didt": float(res.get("didt", 1e6)),
         "units": "V/m",
         "color_max": float(color_max),
+        # the signed perpendicular field gets its own symmetric scale
+        "normal_max": float(max(c["normal_p_color"] for c in cortex["poses"].values())),
+        "normal_sign": "positive points out of the cortex, negative into it",
         # the aim 1 scalp can be drawn around this cortex only if both came off one scan
         "shares_aim1_frame": same_frame(m2m / "T1.nii.gz", aim1_t1),
         "cortex": {k: cortex[k] for k in ("file", "n_vertices", "n_faces")},
@@ -259,6 +284,7 @@ def export_subject(job_dir, viewer_subject, demo=False, out_root=VIEWER_DATA_DIR
             "name": p["name"], "site": p.get("site"), "method": p.get("method"), "rep": p.get("rep"),
             "surface": cortex["poses"][p["name"]]["file"],
             "surface_peak": cortex["poses"][p["name"]]["peak"],
+            "surface_normal": cortex["poses"][p["name"]]["normal_file"],
             "volume": vol["file"] if vol else None,
             "coil": _pose_frame(p, dry),
             "roi": _pose_roi(p, job, dry),

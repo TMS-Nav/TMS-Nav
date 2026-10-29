@@ -1,13 +1,18 @@
 // the aim 2 poses grouped the way the study asks its question: per site, an mri
-// guided placement and an eeg cap placement, and how much less (or more) field the
-// cap puts into the target region. the pairing is the one efield/metrics.py uses,
-// each eeg rep against the mri rep of the same number, or against the only mri
+// guided placement and the cap placements, and how much less (or more) field a cap
+// puts into the target region. there are two caps, the proposal's two methods: EEG
+// is the cap placement brainsight recorded, RECON the one built off the mri
+// reconstruction of the cap. the pairing is the one efield/metrics.py uses, each
+// cap rep against the mri rep of the same number, or against the only mri
 // placement when there is one. pure, so node --test can load it
 
 export const METHODS = [
-  { key: "MRI", label: "MRI-guided" },
-  { key: "EEG", label: "EEG cap" },
+  { key: "MRI", label: "MRI-guided", title: "Placed by MRI-guided neuronavigation" },
+  { key: "EEG", label: "EEG cap", title: "Placed on the EEG cap, as recorded in Brainsight (method 1)" },
+  { key: "RECON", label: "Cap from MRI", title: "Placed on the cap sites reconstructed from the MRI (method 2)" },
 ];
+
+export const CAPS = ["EEG", "RECON"];
 
 /** sites in the order they first appear. */
 export function sites(poses) {
@@ -25,20 +30,22 @@ export function placementsAt(poses, site) {
   return out;
 }
 
-/** the mri placement an eeg placement is compared against, or null. */
+/** the mri placement a cap placement is compared against, or null. */
 export function mriPartner(poses, eeg) {
+  if (!CAPS.includes(eeg.method)) return null;
   const mri = poses.filter((p) => p.site === eeg.site && p.method === "MRI");
   if (mri.length === 1) return mri[0];
   return mri.find((p) => p.rep === eeg.rep) || null;
 }
 
 /**
- * percent difference of the target region mean, eeg cap against mri guided, averaged
- * over the eeg reps that have a partner. null when the site lacks either placement.
+ * percent difference of the target region mean, a cap (EEG unless told) against mri
+ * guided, averaged over the cap reps that have a partner. null when the site lacks
+ * either placement.
  */
-export function eegVsMri(poses, site) {
+export function eegVsMri(poses, site, cap = "EEG") {
   const diffs = [];
-  for (const eeg of poses.filter((p) => p.site === site && p.method === "EEG")) {
+  for (const eeg of poses.filter((p) => p.site === site && p.method === cap)) {
     const mri = mriPartner(poses, eeg);
     const a = eeg.roi && eeg.roi.mean_E_magn;
     const b = mri && mri.roi && mri.roi.mean_E_magn;

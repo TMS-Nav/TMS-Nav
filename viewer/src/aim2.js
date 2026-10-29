@@ -5,16 +5,27 @@
 // everything under its group and both aim 2 panes.
 //
 // the panes follow the study's question: pick a site, then how the coil got there
-// (mri guided or eeg cap), read the field in the target region, and see where it
-// went on the slice
+// (mri guided or one of the two caps), read the field in the target region, and see
+// where it went on the slice. the field can be its strength or the signed part across
+// the cortex, at any coil current, and a cap placement can be shown minus the mri
+// guided one, which is the study's comparison drawn on the brain
 import * as THREE from "three";
 
-import { turbo, turboGradient } from "./colormap.mjs";
-import { METHODS, eegVsMri, placementsAt, sites } from "./placements.mjs";
-import { createSliceMaterial, makeLutTexture, makeVolumeTexture, rasToTexMatrix } from "./sliceMaterial.js";
+import { diverging, divergingGradient, turbo, turboGradient } from "./colormap.mjs";
+import { difference, distance, intensityScale, maxAbs, symmetricTop } from "./fieldMath.mjs";
+import { CAPS, METHODS, eegVsMri, mriPartner, placementsAt, sites } from "./placements.mjs";
+import {
+  createSliceMaterial,
+  makeDivergingLutTexture,
+  makeLutTexture,
+  makeVolumeTexture,
+  rasToTexMatrix,
+} from "./sliceMaterial.js";
 import { AXES, invert4, sampleSlice, sliceGrid, volumeBounds } from "./volumeSlice.mjs";
 
 const COIL_COLOR = 0x1f77b4;
+// the mri guided coil, drawn beside the cap's when a difference is on screen
+const PARTNER_COIL_COLOR = 0xd5d9e0;
 // cortex below the colour cut, a neutral grey that stays clear of every turbo colour
 const CORTEX_GREY_HEX = "#8b9099";
 const CORTEX_GREY = new THREE.Color(CORTEX_GREY_HEX);
@@ -26,6 +37,9 @@ const DEFAULTS = {
   cut: 20,
   pose: 0,
   coilOpacity: 35,
+  field: "magn",
+  diff: false,
+  didt: 1,
   layers: { cortex: true, slice: true, coil: true, roi: true, scalp: true },
 };
 
@@ -56,7 +70,20 @@ function loadState() {
 }
 
 function fmt(v, digits = 2) {
-  return Number.isFinite(v) ? v.toFixed(digits) : "–";
+  if (!Number.isFinite(v)) return "–";
+  // the coil current takes values from about 1 V/m to a few hundred, so the
+  // digits follow the size rather than staying at two
+  const d = Math.abs(v) >= 100 ? 0 : Math.abs(v) >= 10 ? 1 : digits;
+  return v.toFixed(d);
+}
+
+function signed(v) {
+  return `${v > 0 ? "+" : v < 0 ? "−" : ""}${fmt(Math.abs(v))}`;
+}
+
+function methodLabel(key) {
+  const m = METHODS.find((x) => x.key === key);
+  return m ? m.label : key;
 }
 
 async function fetchBytes(url, Type) {
@@ -82,6 +109,7 @@ export function createAim2View({ loadPLY, resetZoom }) {
   group.visible = false;
   const plane = new THREE.Plane(new THREE.Vector3(0, 0, -1), 1e6);
   const lut = makeLutTexture();
+  const lut2 = makeDivergingLutTexture();
   const coilMaterial = new THREE.MeshStandardMaterial({
     color: COIL_COLOR,
     roughness: 0.4,
@@ -89,6 +117,8 @@ export function createAim2View({ loadPLY, resetZoom }) {
     opacity: state.coilOpacity / 100,
     depthWrite: false,
   });
+  const partnerMaterial = coilMaterial.clone();
+  partnerMaterial.color.set(PARTNER_COIL_COLOR);
 
   // per subject, rebuilt on every load
   let data = null;
@@ -96,17 +126,19 @@ export function createAim2View({ loadPLY, resetZoom }) {
   let sliceMesh = null;
   let scalpMesh = null;
   let coilGroup = null;
+  let partnerCoil = null;
   let roiMesh = null;
   let loadToken = 0;
   let subjectLabel = "";
 
   document.documentElement.style.setProperty("--turbo", turboGradient());
+  document.documentElement.style.setProperty("--diverging", divergingGradient());
 
   // ---- teardown ---------------------------------------------------------------
   function dispose(obj) {
     obj.traverse((o) => {
       if (o.geometry && !o.userData.sharedGeometry) o.geometry.dispose();
-      if (o.material && o.material !== coilMaterial) o.material.dispose();
+      if (o.material && o.material !== coilMaterial && o.material !== partnerMaterial) o.material.dispose();
     });
   }
 
@@ -115,7 +147,7 @@ export function createAim2View({ loadPLY, resetZoom }) {
       group.remove(child);
       dispose(child);
     }
-    cortexMesh = sliceMesh = scalpMesh = coilGroup = roiMesh = null;
+    cortexMesh = sliceMesh = scalpMesh = coilGroup = partnerCoil = roiMesh = null;
     if (data) for (const t of Object.values(data.textures)) t.dispose();
     data = null;
     // nothing is cut until a slice exists again, or a head with no field keeps the
@@ -137,21 +169,25 @@ export function createAim2View({ loadPLY, resetZoom }) {
     const { manifest, files } = ds.efield;
     const url = (name) => files[name].href;
     const vol = manifest.volume;
+    // the perpendicular field came in later, an older export has none
+    const normalOf = (p) => (p.surface_normal && files[p.surface_normal] ? fetchBytes(url(p.surface_normal), Float32Array) : null);
     const [cortexGeo, t1, ...rest] = await Promise.all([
       loadPLY(url(manifest.cortex.file)),
       vol ? fetchBytes(url(vol.t1), Uint8Array) : null,
       ...manifest.poses.map((p) => fetchBytes(url(p.surface), Float32Array)),
       ...manifest.poses.map((p) => (vol && p.volume ? fetchBytes(url(p.volume), Uint8Array) : null)),
+      ...manifest.poses.map(normalOf),
     ]);
     if (token !== loadToken) {
       cortexGeo.dispose();
       return;
     }
     const n = manifest.poses.length;
-    data = { manifest, cortexGeo, t1, fields: {}, fieldBytes: {}, textures: {} };
+    data = { manifest, cortexGeo, t1, fields: {}, fieldBytes: {}, normals: {}, diffs: {}, textures: {} };
     manifest.poses.forEach((p, i) => {
       data.fields[p.name] = rest[i];
       data.fieldBytes[p.name] = rest[n + i];
+      data.normals[p.name] = rest[2 * n + i];
       if (rest[n + i]) data.textures[p.name] = makeVolumeTexture(rest[n + i], vol.dims);
     });
     if (vol) {
@@ -190,7 +226,7 @@ export function createAim2View({ loadPLY, resetZoom }) {
 
   function addSlice() {
     const t1 = data.textures.t1;
-    const mat = createSliceMaterial({ t1, field: t1, lut, rasToTex: data.rasToTex });
+    const mat = createSliceMaterial({ t1, field: t1, lut, lut2, rasToTex: data.rasToTex });
     sliceMesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
     sliceMesh.renderOrder = 1;
     group.add(sliceMesh);
@@ -211,17 +247,31 @@ export function createAim2View({ loadPLY, resetZoom }) {
     group.add(scalpMesh);
   }
 
-  function addCoilAndRoi() {
-    // a figure of eight as its two windings side by side along x', each about the
-    // size of a d70 loop. no handle, the windings are what touch the head
-    coilGroup = new THREE.Group();
+  // a figure of eight as its two windings side by side along x', each about the
+  // size of a d70 loop. no handle, the windings are what touch the head
+  function makeCoil(material) {
+    const coil = new THREE.Group();
     for (const side of [-1, 1]) {
-      const ring = new THREE.Mesh(new THREE.TorusGeometry(28, 1.6, 10, 64), coilMaterial);
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(28, 1.6, 10, 64), material);
       ring.position.set(side * 30, 0, 0);
-      coilGroup.add(ring);
+      coil.add(ring);
     }
-    coilGroup.matrixAutoUpdate = false;
-    group.add(coilGroup);
+    coil.matrixAutoUpdate = false;
+    group.add(coil);
+    return coil;
+  }
+
+  function placeCoil(coil, frame) {
+    const y = new THREE.Vector3(...frame.handle);
+    const z = new THREE.Vector3(...frame.normal_in);
+    const x = new THREE.Vector3().crossVectors(y, z);
+    coil.matrix.makeBasis(x, y, z).setPosition(...frame.centre);
+    coil.matrixWorldNeedsUpdate = true;
+  }
+
+  function addCoilAndRoi() {
+    coilGroup = makeCoil(coilMaterial);
+    partnerCoil = makeCoil(partnerMaterial);
 
     roiMesh = new THREE.Group();
     const shell = new THREE.Mesh(
@@ -241,43 +291,92 @@ export function createAim2View({ loadPLY, resetZoom }) {
     return data ? data.manifest.poses[state.pose] : null;
   }
 
+  // the mri guided placement the current cap placement is compared with, or null
+  function partnerPose() {
+    const pose = currentPose();
+    return pose ? mriPartner(data.manifest.poses, pose) : null;
+  }
+
+  function hasNormal() {
+    return Boolean(data) && data.manifest.poses.every((p) => data.normals[p.name]);
+  }
+
+  function diffOn() {
+    return state.diff && Boolean(partnerPose());
+  }
+
+  function normalOn() {
+    return state.field === "normal" && hasNormal();
+  }
+
+  // what the cortex shows: one pose's |E| or E_normal, or a cap minus its mri
+  // guided partner. values in V/m at the reference current, top is the colour
+  // scale's top, signed maps run from -top to +top
+  function surfaceView() {
+    const pose = currentPose();
+    const normal = normalOn();
+    const of = (p) => (normal ? data.normals[p.name] : data.fields[p.name]);
+    if (diffOn()) {
+      const mri = partnerPose();
+      const key = `${normal ? "n" : "m"}:${pose.name}:${mri.name}`;
+      if (!data.diffs[key]) {
+        const values = difference(of(pose), of(mri));
+        data.diffs[key] = { values, top: symmetricTop(values) || 1 };
+      }
+      return { signed: true, diff: true, normal, mri, ...data.diffs[key] };
+    }
+    if (normal) return { signed: true, diff: false, normal, values: of(pose), top: data.manifest.normal_max || 1 };
+    return { signed: false, diff: false, normal, values: of(pose), top: data.manifest.color_max };
+  }
+
   function applyPose() {
     const pose = currentPose();
     if (!pose) return;
-    colourCortex();
-    if (sliceMesh) {
-      const tex = data.textures[pose.name];
-      sliceMesh.material.uniforms.field.value = tex || data.textures.t1;
-      sliceMesh.material.uniforms.showField.value = tex ? 1 : 0;
-    }
-    if (pose.coil) {
-      const y = new THREE.Vector3(...pose.coil.handle);
-      const z = new THREE.Vector3(...pose.coil.normal_in);
-      const x = new THREE.Vector3().crossVectors(y, z);
-      coilGroup.matrix.makeBasis(x, y, z).setPosition(...pose.coil.centre);
-      coilGroup.matrixWorldNeedsUpdate = true;
-    }
+    if (pose.coil) placeCoil(coilGroup, pose.coil);
     if (pose.roi && pose.roi.centre) {
       roiMesh.position.set(...pose.roi.centre);
       roiMesh.scale.setScalar(pose.roi.radius_mm || 10);
     }
+    applyView();
+  }
+
+  // everything that follows from the field choice: cortex colours, the slice's
+  // field, the partner coil and the scale
+  function applyView() {
+    const pose = currentPose();
+    if (!pose) return;
+    const view = surfaceView();
+    colourCortex(view);
+    if (sliceMesh) {
+      const u = sliceMesh.material.uniforms;
+      const tex = data.textures[pose.name];
+      const mriTex = view.diff ? data.textures[view.mri.name] : null;
+      // the perpendicular field has no volume, it only exists on the cortex
+      const show = Boolean(tex) && !view.normal && (!view.diff || Boolean(mriTex));
+      u.field.value = tex || data.textures.t1;
+      u.field2.value = mriTex || data.textures.t1;
+      u.mode.value = view.diff ? 1 : 0;
+      u.diffScale.value = view.diff ? data.manifest.color_max / view.top : 1;
+      u.showField.value = show ? 1 : 0;
+    }
+    if (view.diff && view.mri.coil) placeCoil(partnerCoil, view.mri.coil);
+    $("a2-slice-note").hidden = !view.normal;
     applyLayers();
     applySlice();
   }
 
-  function colourCortex() {
+  function colourCortex(view = surfaceView()) {
     if (!cortexMesh) return;
-    const e = data.fields[currentPose().name];
-    const top = data.manifest.color_max;
+    const { values, top, signed: isSigned } = view;
     const cut = state.cut / 100;
     const col = cortexMesh.geometry.attributes.color;
     const c = new THREE.Color();
-    for (let i = 0; i < e.length; i++) {
-      const t = e[i] / top;
-      if (t < cut) {
+    for (let i = 0; i < values.length; i++) {
+      const t = values[i] / top;
+      if ((isSigned ? Math.abs(t) : t) < cut) {
         c.copy(CORTEX_GREY);
       } else {
-        const [r, g, b] = turbo(t);
+        const [r, g, b] = isSigned ? diverging(t) : turbo(t);
         c.setRGB(r, g, b, THREE.SRGBColorSpace);
       }
       col.setXYZ(i, c.r, c.g, c.b);
@@ -349,6 +448,10 @@ export function createAim2View({ loadPLY, resetZoom }) {
     if (sliceMesh) sliceMesh.visible = state.layers.slice;
     if (scalpMesh) scalpMesh.visible = state.layers.scalp;
     if (coilGroup) coilGroup.visible = state.layers.coil && Boolean(pose && pose.coil);
+    if (partnerCoil) {
+      const mri = data && diffOn() ? partnerPose() : null;
+      partnerCoil.visible = state.layers.coil && Boolean(mri && mri.coil);
+    }
     if (roiMesh) roiMesh.visible = state.layers.roi && Boolean(pose && pose.roi && pose.roi.centre);
   }
 
@@ -374,8 +477,13 @@ export function createAim2View({ loadPLY, resetZoom }) {
     const a = AXES[state.axis];
     const grid = sliceGrid(data.bounds, state.axis, state.slicePos, vol.step_mm);
     const g = sampleSlice(data.t1, vol.dims, data.rasToVox, grid);
-    const fieldBytes = data.fieldBytes[pose.name];
-    const f = fieldBytes ? sampleSlice(fieldBytes, vol.dims, data.rasToVox, grid) : null;
+    const view = surfaceView();
+    const fieldBytes = view.normal ? null : data.fieldBytes[pose.name];
+    const mriBytes = view.diff ? data.fieldBytes[view.mri.name] : null;
+    const f = fieldBytes && (!view.diff || mriBytes) ? sampleSlice(fieldBytes, vol.dims, data.rasToVox, grid) : null;
+    const f2 = f && view.diff ? sampleSlice(mriBytes, vol.dims, data.rasToVox, grid) : null;
+    // a byte step on the slice in units of the difference scale's top
+    const diffScale = view.diff ? data.manifest.color_max / view.top / 255 : 0;
 
     // the picture at voxel resolution first, then scaled up smoothly onto the visible
     // canvas so the target ring can be drawn crisp on top
@@ -389,11 +497,11 @@ export function createAim2View({ loadPLY, resetZoom }) {
       let r = g[i] * 0.92, gg = g[i] * 0.92, b = g[i] * 0.92;
       const alpha = g[i] > 4 ? 255 : 0;
       if (f && g[i] > 4) {
-        const t = f[i] / 255;
-        const x = Math.min(Math.max((t - cut) / 0.12, 0), 1);
+        const t = f2 ? (f[i] - f2[i]) * diffScale : f[i] / 255;
+        const x = Math.min(Math.max(((f2 ? Math.abs(t) : t) - cut) / 0.12, 0), 1);
         const w = x * x * (3 - 2 * x) * 0.88;
         if (w > 0) {
-          const [tr, tg, tb] = turbo(t);
+          const [tr, tg, tb] = f2 ? diverging(t) : turbo(t);
           r = r * (1 - w) + tr * 255 * w;
           gg = gg * (1 - w) + tg * 255 * w;
           b = b * (1 - w) + tb * 255 * w;
@@ -434,10 +542,12 @@ export function createAim2View({ loadPLY, resetZoom }) {
     $("a2-o-r").textContent = right;
     $("a2-o-t").textContent = top;
     $("a2-o-b").textContent = bottom;
-    canvas.setAttribute(
-      "aria-label",
-      `${state.axis} MRI slice at ${a.name} ${state.slicePos} mm with the field of the ${pose.site} coil over it`
-    );
+    const what = view.normal
+      ? "with no field over it"
+      : view.diff
+        ? `with the ${pose.site} field of the ${methodLabel(pose.method)} placement minus the MRI-guided one over it`
+        : `with the field of the ${pose.site} coil over it`;
+    canvas.setAttribute("aria-label", `${state.axis} MRI slice at ${a.name} ${state.slicePos} mm ${what}`);
   }
 
   // ---- panels -------------------------------------------------------------------
@@ -476,7 +586,7 @@ export function createAim2View({ loadPLY, resetZoom }) {
         b.type = "button";
         b.textContent = m.label;
         b.disabled = true;
-        b.title = `No ${m.label} placement recorded at ${site} for this head`;
+        b.title = `${m.title}. None at ${site} for this head`;
         methodBox.appendChild(b);
         continue;
       }
@@ -484,6 +594,7 @@ export function createAim2View({ loadPLY, resetZoom }) {
         const b = document.createElement("button");
         b.type = "button";
         b.textContent = p.label;
+        b.title = m.title;
         const on = p.index === state.pose;
         b.classList.toggle("on", on);
         b.setAttribute("aria-pressed", on ? "true" : "false");
@@ -499,6 +610,7 @@ export function createAim2View({ loadPLY, resetZoom }) {
     buildCoilButtons();
     applyPose();
     renderNumbers();
+    syncFieldControls();
   }
 
   function syncSliceControls() {
@@ -516,39 +628,85 @@ export function createAim2View({ loadPLY, resetZoom }) {
     }
   }
 
-  // the colour scale shows what is coloured: grey up to the cut, the colormap above
+  // the colour scale shows what is coloured: grey up to the cut, the colormap above.
+  // a signed map is grey in a band around zero and runs from -top to +top
   function syncScale() {
-    const top = data.manifest.color_max;
+    const view = surfaceView();
+    const k = intensityScale(state.didt);
+    const top = view.top * k;
     const pct = state.cut;
-    $("a2-tick-max").textContent = fmt(top);
-    $("a2-cut-val").textContent = `${fmt((pct / 100) * top)} V/m`;
-    $("a2-bar").style.background =
-      `linear-gradient(90deg, ${CORTEX_GREY_HEX} 0 ${pct}%, transparent ${pct}%), var(--turbo)`;
+    const pose = currentPose();
+    const what = view.normal ? "perpendicular field" : "field strength";
+    $("a2-scale-title").textContent = view.diff
+      ? `${methodLabel(pose.method)} minus MRI-guided`
+      : view.normal ? "Perpendicular field" : "Field strength";
+    $("a2-scale-unit").textContent = `V/m at ${state.didt} A/µs`;
+    $("a2-tick-min").textContent = view.signed ? signed(-top) : "0";
+    $("a2-tick-mid").textContent = view.signed ? "0" : "";
+    $("a2-tick-max").textContent = view.signed ? signed(top) : fmt(top);
+    $("a2-ends").hidden = !view.signed;
+    $("a2-end-lo").textContent = view.diff ? `less ${what} with the cap` : "into the cortex";
+    $("a2-end-hi").textContent = view.diff ? `more with the cap` : "out of the cortex";
+    $("a2-cut-label").textContent = view.signed ? "colour beyond" : "colour from";
+    $("a2-cut-val").textContent = `${view.signed ? "±" : ""}${fmt((pct / 100) * top)} V/m`;
+    $("a2-didt-val").textContent = `${state.didt} A/µs`;
+    if (view.signed) {
+      const lo = 50 - pct / 2, hi = 50 + pct / 2;
+      $("a2-bar").style.background =
+        `linear-gradient(90deg, transparent ${lo}%, ${CORTEX_GREY_HEX} ${lo}% ${hi}%, transparent ${hi}%), var(--diverging)`;
+    } else {
+      $("a2-bar").style.background =
+        `linear-gradient(90deg, ${CORTEX_GREY_HEX} 0 ${pct}%, transparent ${pct}%), var(--turbo)`;
+    }
   }
 
   function renderNumbers() {
     const pose = currentPose();
     const poses = data.manifest.poses;
-    const method = METHODS.find((m) => m.key === pose.method);
     const placement = placementsAt(poses, pose.site).find((p) => p.index === state.pose);
+    const k = intensityScale(state.didt);
+    const view = surfaceView();
     const rows = [];
-    if (pose.roi) {
-      rows.push(["Target region, mean", fmt(pose.roi.mean_E_magn), "main"]);
-      rows.push(["Target region, peak", fmt(pose.roi.peak_E_magn)]);
+    let head = `${pose.site}, ${placement ? placement.label : methodLabel(pose.method)}`;
+    if (view.diff) {
+      const mri = view.mri;
+      const cap = methodLabel(pose.method);
+      head = `${pose.site}, ${cap} minus MRI-guided`;
+      const key = view.normal ? "max_abs_E_normal" : "mean_E_magn";
+      const name = view.normal ? "Target region, max |E⊥|" : "Target region, mean";
+      const a = pose.roi && pose.roi[key];
+      const b = mri.roi && mri.roi[key];
+      rows.push([`${name}, ${cap}`, fmt(a * k)]);
+      rows.push([`${name}, MRI-guided`, fmt(b * k)]);
+      rows.push(["Difference", signed((a - b) * k), "main"]);
+      if (pose.coil && mri.coil) rows.push(["Coil centres apart", `${distance(pose.coil.centre, mri.coil.centre).toFixed(1)} mm`]);
+    } else if (view.normal) {
+      if (pose.roi) rows.push(["Target region, max |E⊥|", fmt(pose.roi.max_abs_E_normal * k), "main"]);
+      rows.push(["Whole brain, max |E⊥|", fmt(maxAbs(view.values) * k)]);
+    } else {
+      if (pose.roi) {
+        rows.push(["Target region, mean", fmt(pose.roi.mean_E_magn * k), "main"]);
+        rows.push(["Target region, peak", fmt(pose.roi.peak_E_magn * k)]);
+      }
+      rows.push(["Whole brain, peak", fmt(pose.surface_peak * k)]);
     }
-    rows.push(["Whole brain, peak", fmt(pose.surface_peak)]);
-    const cmp = eegVsMri(poses, pose.site);
-    const cmpTitle = cmp
-      ? `mean field in the target region, EEG cap against MRI-guided, ${cmp.n} pair${cmp.n > 1 ? "s" : ""}`
-      : `needs both an MRI-guided and an EEG cap placement at ${pose.site}`;
-    rows.push([
-      "EEG cap vs MRI-guided",
-      cmp ? `${cmp.pct > 0 ? "+" : ""}${cmp.pct.toFixed(1)}%` : "–",
-      "cmp",
-      cmpTitle,
-    ]);
+    // the paper's comparison, mean |E| in the target region, one row per cap that
+    // has a pair here. a head with neither still shows the row, as a dash
+    const caps = CAPS.filter((c) => eegVsMri(poses, pose.site, c));
+    for (const c of caps.length ? caps : ["EEG"]) {
+      const cmp = eegVsMri(poses, pose.site, c);
+      const title = cmp
+        ? `mean field in the target region, ${methodLabel(c)} against MRI-guided, ${cmp.n} pair${cmp.n > 1 ? "s" : ""}. the same at any coil current`
+        : `needs both an MRI-guided and a cap placement at ${pose.site}`;
+      rows.push([
+        `${methodLabel(c)} vs MRI-guided`,
+        cmp ? `${cmp.pct > 0 ? "+" : ""}${cmp.pct.toFixed(1)}%` : "–",
+        rows.some((r) => r[2] === "cmp") ? "cmp-next" : "cmp",
+        title,
+      ]);
+    }
     $("a2-roi").innerHTML =
-      `<div class="a2-roi-head"><span>${pose.site}, ${placement ? placement.label : method ? method.label : pose.method}</span><span class="c-num">V/m</span></div>` +
+      `<div class="a2-roi-head"><span>${head}</span><span class="c-num">V/m</span></div>` +
       rows
         .map(
           ([k, v, kind, title]) =>
@@ -576,10 +734,45 @@ export function createAim2View({ loadPLY, resetZoom }) {
     $("a2-layer-slice").disabled = !m.volume;
     $("a2-layer-scalp").disabled = !m.shares_aim1_frame;
     $("a2-cut").value = state.cut;
+    $("a2-didt").value = state.didt;
     $("a2-coil-opacity").value = state.coilOpacity;
     for (const k of Object.keys(state.layers)) $(`a2-layer-${k}`).checked = state.layers[k];
     renderNumbers();
     syncSliceControls();
+    syncFieldControls();
+  }
+
+  // the field picker and the difference switch. the difference needs a cap
+  // placement with an mri guided partner at its site, and says why when it is off
+  function syncFieldControls() {
+    if (!data) return;
+    const normal = hasNormal();
+    for (const b of document.querySelectorAll("#a2-field button")) {
+      const on = (normalOn() ? "normal" : "magn") === b.dataset.field;
+      b.classList.toggle("on", on);
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+      if (b.dataset.field === "normal") {
+        b.disabled = !normal;
+        if (!normal) b.title = "This export has no perpendicular field. Export the head again to get it";
+      }
+    }
+    const pose = currentPose();
+    const can = Boolean(partnerPose());
+    const box = $("a2-diff");
+    box.disabled = !can;
+    box.checked = can && state.diff;
+    $("a2-diff-hint").textContent = can
+      ? ""
+      : pose.method === "MRI"
+        ? "Pick a cap placement to compare it with this one."
+        : `No MRI-guided placement at ${pose.site} to compare with.`;
+  }
+
+  function refreshView() {
+    save();
+    applyView();
+    renderNumbers();
+    syncFieldControls();
   }
 
   // ---- controls -----------------------------------------------------------------
@@ -612,9 +805,27 @@ export function createAim2View({ loadPLY, resetZoom }) {
     $("a2-cut").addEventListener("input", (e) => {
       state.cut = Number(e.target.value);
       save();
+      if (!data) return;
       colourCortex();
       applySlice();
       syncScale();
+    });
+    // only numbers change with the current, the picture is the same field scaled
+    $("a2-didt").addEventListener("input", (e) => {
+      state.didt = Number(e.target.value);
+      save();
+      if (data) renderNumbers();
+    });
+    for (const b of document.querySelectorAll("#a2-field button")) {
+      b.addEventListener("click", () => {
+        if (!data || b.disabled) return;
+        state.field = b.dataset.field;
+        refreshView();
+      });
+    }
+    $("a2-diff").addEventListener("change", (e) => {
+      state.diff = e.target.checked;
+      if (data) refreshView();
     });
     $("a2-coil-opacity").addEventListener("input", (e) => {
       state.coilOpacity = Number(e.target.value);

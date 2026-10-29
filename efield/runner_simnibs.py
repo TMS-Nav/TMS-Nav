@@ -196,6 +196,24 @@ def realize_roi(roi, m2m):
             "kind": kind, "mask": mask, "n_nodes": int(mask.sum()), "nodes": nodes}
 
 
+def place_over_target(mesh, p, m2m, distance):
+    """matsimnibs for a pose that sits on the skin straight over its target.
+
+    the target is in subject mm (extra.target) or mni mm (extra.target_mni). the
+    coil goes on the skin point closest to it with that point's normal, the
+    handle as stored, laid flat. returns (matrix, target in subject mm)
+    """
+
+    extra = p.get("extra") or {}
+    if "target_mni" in extra:
+        target = np.asarray(simnibs.mni2subject_coords(extra["target_mni"], str(m2m)), dtype=float)
+    else:
+        target = np.asarray(extra["target"], dtype=float)
+    _, skin = skin_distance(mesh, target)
+    ydir = np.asarray(p["matsimnibs"], dtype=float)[:3, 1]
+    return mesh.calc_matsimnibs(skin, skin + ydir * 50.0, float(distance)), target
+
+
 def build_session(job, coil_path):
     S = sim_struct.SESSION()
     S.subpath = str(job["m2m"])
@@ -296,7 +314,9 @@ def main(argv=None):
 
     # --- the poses
     mesh = None
-    if files is not None and os.path.exists(files.fnamehead) and (not args.no_mesh or job.get("snap_to_skin")):
+    over_target = any((p.get("extra") or {}).get("place") == "over_target" for p in job["poses"])
+    if files is not None and os.path.exists(files.fnamehead) and (not args.no_mesh or job.get("snap_to_skin")
+                                                                   or over_target):
         t0 = time.time()
         mesh = load_skin(m2m)
         print(f"loaded head mesh in {time.time() - t0:.1f} s, {mesh.nodes.nr} nodes")
@@ -308,6 +328,16 @@ def main(argv=None):
                  "rep": p.get("rep"), "matsimnibs": m.tolist()}
         if m.shape != (4, 4) or not check_rotation(m[:3, :3]):
             problems.append(f"pose {p['name']}: matsimnibs is not a proper rotation")
+        # an mri guided pose with only a target, the coil goes on the skin over it
+        if (p.get("extra") or {}).get("place") == "over_target":
+            if mesh is None:
+                problems.append(f"pose {p['name']}: needs the head mesh to be placed over its target")
+            else:
+                m, target = place_over_target(mesh, p, m2m, job.get("coil_skin_distance_mm", 4.0))
+                p["matsimnibs"] = m.tolist()
+                entry["matsimnibs"] = m.tolist()
+                entry["placed_over_target"] = [float(x) for x in target]
+                print(f"  pose {i} {p['name']}: placed on the skin over its target {np.round(target, 1)}")
         centre, ydir, zdir = m[:3, 3], m[:3, 1], m[:3, 2]
         line = (f"  pose {i} {p['name']}: centre {np.round(centre, 1)} handle {np.round(ydir, 3)} "
                 f"normal(in) {np.round(zdir, 3)}")
