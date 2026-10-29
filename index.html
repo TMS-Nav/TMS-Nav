@@ -1,0 +1,337 @@
+<!DOCTYPE html><html lang=en><script type=importmap>{"imports":{"1dRjC":"./coil.1bab5198.ply","2PKOK":"./efield_demo_F4_RECON.f58391c7.f32","2exwy":"./scalp.548d5203.ply","3GHgq":"./coil.7090f20c.ply","4B6bF":"./zstd.cc0a8fc7.js","6NlxT":"./t1.a0cb8e71.u8","6QuNe":"./scalp.48f73331.ply","77Pao":"./field_demo_SMA_RECON.a2b5ca5f.u8","7YQLi":"./normal_demo_SMA_RECON.c82ab017.f32","7eRxq":"./scalp.5b855960.ply","89M77":"./montecarlo.15112d05.json","8N77H":"./scalp.f4b8013b.ply","a1NTy":"./normal_demo_F4_MRI.b3d725a5.f32","aXIfU":"./coil.654151cf.ply","bDsRi":"./cortex.f56bb064.ply","bEAHB":"./field_demo_F4_RECON.b046ee12.u8","bUf66":"./lz4.e5e090af.js","buNUr":"./blosc.79d00f82.js","buoIv":"./normal_demo_F4_RECON.fa4a2c25.f32","c4fsm":"./scalp.e2cbd793.ply","c58Zt":"./coil.e8aa6527.ply","cbYcQ":"./montecarlo.387fa790.json","d2X5r":"./coil.e3881db9.ply","dv2El":"./efield_demo_F4_MRI.f7b06939.f32","f9ZVD":"./montecarlo.75e6a190.json","fDBk2":"./montecarlo.5bb2f400.json","fKTh0":"./scalp.1e15f9bb.ply","flBx5":"./montecarlo.b93e0680.json","gtxom":"./coil.f0e93404.ply","hHeDB":"./normal_demo_SMA_MRI.98778fa2.f32","hcPyM":"./scalp.c6cf000a.ply","hjVSn":"./montecarlo.d824e1fb.json","igRIO":"./coil.297fffff.ply","iuMeo":"./field_demo_F4_MRI.4803a267.u8","jEQEK":"./montecarlo.22d6fa63.json","k5tYM":"./efield_demo_SMA_RECON.8fcd5563.f32","kgVN1":"./field_demo_SMA_MRI.cda40c5c.u8","lDBCr":"./efield_demo_SMA_MRI.d9ca041f.f32"}}</script><meta charset=utf-8><meta name=viewport content="width=device-width, initial-scale=1"><title>TMS-Nav viewer</title><meta name=description content="Where an EEG 10-20 cap puts a TMS coil compared with MRI guided neuronavigation, on six sample heads."><link rel=icon href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='5' cy='8' r='3.5' fill='none' stroke='%231f77b4' stroke-width='1.6'/%3E%3Ccircle cx='11' cy='8' r='3.5' fill='none' stroke='%231f77b4' stroke-width='1.6'/%3E%3C/svg%3E"><link rel=stylesheet href=viewer.8c599b30.css><body>
+    <div id=app>
+      <aside id=ui class=panel aria-label="viewer controls">
+        <h1>TMS Navigation</h1>
+        <div class=subject>
+          <label for=subject-select>subject</label>
+          <select id=subject-select></select>
+        </div>
+
+        <div id=aim1-controls class=aim-pane role=tabpanel aria-labelledby=tab-aim1>
+        <fieldset>
+          <legend>layers</legend>
+          <label><input type=checkbox id=toggle-skull checked> skull (when available)</label>
+          <label><input type=checkbox id=toggle-fiducials checked> MRI fiducials ◆ pink</label>
+          <div class=hint id=subject-qc role=status></div>
+          <label><input type=checkbox id=toggle-scalp autocomplete=off checked> scalp <span class="sw-scalp swatch" aria-hidden=true></span></label>
+          <label><input type=checkbox id=toggle-coil autocomplete=off checked> coil <span class="sw-coil swatch" aria-hidden=true></span></label>
+          <label><input type=checkbox id=toggle-targets autocomplete=off checked> targets <span class="sw-target swatch" aria-hidden=true></span></label>
+          <label><input type=checkbox id=toggle-landmarks autocomplete=off checked> landmarks ■ yellow</label>
+          <label><input type=checkbox id=toggle-eeg autocomplete=off checked> 10–20 electrodes</label>
+          <label><input type=checkbox id=toggle-arcs autocomplete=off checked> 10–20 dashed arcs</label>
+          <div class=hint id=eeg-status></div>
+          <label><input type=checkbox id=toggle-mc autocomplete=off checked> monte carlo <span class="sw-mc swatch" aria-hidden=true><i></i><i></i><i></i></span></label>
+        </fieldset>
+
+        <div class=row>
+          <label for=opacity>scalp opacity</label>
+          <input type=range id=opacity min=0 max=100 value=85>
+        </div>
+
+        <div class=row>
+          <label for=coil-opacity>coil opacity</label>
+          <input type=range id=coil-opacity min=0 max=100 value=35>
+        </div>
+
+        <div class=row>
+          <label for=variability>target variability <span id=variability-val>2.5 mm</span></label>
+          <input type=range id=variability min=1 max=10 step=0.5 value=2.5>
+        </div>
+
+        <fieldset id=mc-panel>
+          <legend>monte carlo</legend>
+          <div class=row>
+            <label for=mc-scale>exaggerate <span id=mc-scale-val>x5</span></label>
+            <input type=range id=mc-scale min=1 max=10 step=1 value=5>
+          </div>
+          <label><input type=checkbox id=mc-samples autocomplete=off checked> samples</label>
+          <label><input type=checkbox id=mc-mean autocomplete=off checked> mean</label>
+          <label><input type=checkbox id=mc-ellipsoid autocomplete=off checked> 95% ellipsoid</label>
+          <div class=row>
+            <button id=mc-resample type=button title="draw a fresh random set">resample</button>
+            <span class=hint id=mc-draw></span>
+          </div>
+          <button class=disclose id=mc-note-head type=button aria-expanded=false>
+            <span class=chev></span>settings
+          </button>
+          <div class=hint id=mc-note hidden></div>
+        </fieldset>
+
+        <fieldset id=landmark-editor disabled>
+          <legend>edit landmarks / MRI fiducials</legend>
+          <div class=hint id=landmark-space></div>
+          <label for=landmark-select>Landmark</label>
+          <select id=landmark-select aria-label="Selected landmark"></select>
+          <form id=landmark-form>
+            <div class=landmark-coordinates>
+              <label>X (R+)<input id=landmark-x type=number step=any required aria-label="Landmark X in millimeters"></label>
+              <label>Y (A+)<input id=landmark-y type=number step=any required aria-label="Landmark Y in millimeters"></label>
+              <label>Z (S+)<input id=landmark-z type=number step=any required aria-label="Landmark Z in millimeters"></label>
+            </div>
+            <label><input id=landmark-snap type=checkbox checked> constrain entries to scalp</label>
+            <button>Apply coordinates</button>
+          </form>
+          <div class=landmark-actions>
+            <button id=landmark-project type=button>Snap to scalp</button>
+            <button id=landmark-pick type=button aria-pressed=false>Pick on scalp</button>
+          </div>
+          <label for=landmark-step>Surface step (mm)</label>
+          <input id=landmark-step type=number min=0.1 max=20 step=0.1 value=1>
+          <div class=landmark-directions aria-label="Move along scalp">
+            <button type=button data-landmark-direction=[-1,0,0]>Left −X</button>
+            <button type=button data-landmark-direction=[1,0,0]>Right +X</button>
+            <button type=button data-landmark-direction=[0,-1,0]>Back −Y</button>
+            <button type=button data-landmark-direction=[0,1,0]>Front +Y</button>
+            <button type=button data-landmark-direction=[0,0,-1]>Down −Z</button>
+            <button type=button data-landmark-direction=[0,0,1]>Up +Z</button>
+          </div>
+          <div class=landmark-actions>
+            <button id=landmark-reset type=button>Reset selected</button>
+            <button id=landmark-export type=button>Export JSON</button>
+          </div>
+          <p class=hint id=landmark-status role=status aria-live=polite></p>
+        </fieldset>
+
+        <div class=hint>drag to rotate, scroll to zoom, click a marker</div>
+        </div>
+
+        <div id=aim2-controls class=aim-pane role=tabpanel aria-labelledby=tab-aim2 hidden>
+          <p class=a2-empty-left id=a2-empty-left hidden></p>
+          <div id=a2-controls>
+            <fieldset>
+              <legend>coil</legend>
+              <div class=seg id=a2-sites role=group aria-label="Stimulation site"></div>
+              <div class=seg id=a2-methods role=group aria-label="How the coil was placed"></div>
+            </fieldset>
+
+            <fieldset id=a2-field-set>
+              <legend>field</legend>
+              <div class=seg id=a2-field role=group aria-label="Which part of the field">
+                <button type=button data-field=magn title="How strong the field is, |E|">strength</button>
+                <button type=button data-field=normal title="The part of the field across the cortex, signed: into it or out of it">perpendicular</button>
+              </div>
+              <label><input type=checkbox id=a2-diff autocomplete=off> minus MRI-guided</label>
+              <div class=hint id=a2-diff-hint role=status></div>
+            </fieldset>
+
+            <fieldset id=a2-slice-set>
+              <legend>slice</legend>
+              <div class=seg id=a2-axis role=group aria-label="Slice direction">
+                <button type=button data-axis=sagittal title="Cut left to right, seen from the side">sagittal</button>
+                <button type=button data-axis=axial title="Cut across the head, seen from above">axial</button>
+                <button type=button data-axis=coronal title="Cut front to back, seen from the front">coronal</button>
+              </div>
+              <div class=row>
+                <label for=a2-pos>position <span id=a2-pos-val class=val></span></label>
+                <input type=range id=a2-pos min=-100 max=100 step=1 value=0>
+              </div>
+              <div class=pair-btns>
+                <button type=button id=a2-recentre class=small-btn title="Move the slice back through the target region">To target</button>
+                <button type=button id=a2-flip class=small-btn aria-pressed=false title="Keep the other half of the brain">Flip side</button>
+              </div>
+            </fieldset>
+
+            <fieldset>
+              <legend>layers</legend>
+              <label><input type=checkbox id=a2-layer-cortex autocomplete=off checked> cortex</label>
+              <label><input type=checkbox id=a2-layer-slice autocomplete=off checked> MRI slice</label>
+              <label><input type=checkbox id=a2-layer-roi autocomplete=off checked> target region</label>
+              <label><input type=checkbox id=a2-layer-scalp autocomplete=off checked> scalp</label>
+              <label><input type=checkbox id=a2-layer-coil autocomplete=off checked> coil <span class="sw-coil swatch" aria-hidden=true></span></label>
+              <div class="nested row">
+                <label for=a2-coil-opacity>coil opacity</label>
+                <input type=range id=a2-coil-opacity min=0 max=100 value=35>
+              </div>
+            </fieldset>
+          </div>
+        </div>
+
+        <div class=credit>
+          Sample heads are the SimNIBS example data and the MNI152 atlas. For research and teaching only.
+          <button type=button class=credit-link id=sources-open aria-haspopup=dialog aria-controls=sources>Sources, licenses and disclaimer</button>
+        </div>
+      </aside>
+
+      <main id=stage>
+        <canvas id=c></canvas>
+        <nav id=view-tabs aria-label=View><button id=tab-head aria-selected=true>3D head</button><button id=tab-mri aria-selected=false>Anatomical MRI</button></nav>
+        <section id=mri-panel hidden aria-label="Anatomical MRI slices">
+          <div id=mri-toolbar>
+            <label>Layout <select id=mri-layout><option value=multi>Three planes<option value=axial>Axial<option value=coronal>Coronal<option value=sagittal>Sagittal</select></label>
+            <label><input id=mri-radiological type=checkbox> Radiological display</label>
+            <label><input id=mri-overlays type=checkbox> Fiducials / landmarks</label>
+            <label>Black <input id=mri-black type=number step=any></label><label>White <input id=mri-white type=number step=any></label>
+            <label>Zoom <input id=mri-zoom type=range min=40 max=400 value=100></label>
+            <button id=mri-reset>Reset view</button>
+          </div>
+          <p id=mri-status role=status>Open anatomical MRI to load the native T1w.</p>
+          <div id=mri-canvas-wrap><canvas id=mri-canvas></canvas></div>
+          <div id=slice-controls>
+            <label>Sagittal <input id=slice-x type=range min=0 max=1000 value=500></label>
+            <label>Coronal <input id=slice-y type=range min=0 max=1000 value=500></label>
+            <label>Axial <input id=slice-z type=range min=0 max=1000 value=500></label>
+          </div>
+          <div id=mri-point-actions><button id=mri-place>Place selected point at crosshair</button><button id=mri-add>Add fiducial at crosshair</button></div>
+        </section>
+
+        <div id=aim-tabs role=tablist aria-label="Study aim" data-aim=1>
+          <button type=button role=tab id=tab-aim1 data-aim=1 aria-selected=true aria-controls="aim1-controls aim1-metrics">Aim 1</button>
+          <button type=button role=tab id=tab-aim2 data-aim=2 aria-selected=false aria-controls="aim2-controls aim2-metrics" tabindex=-1>Aim 2</button>
+          <span class=tab-ink aria-hidden=true></span>
+        </div>
+
+        <p id=a2-stage-empty class=stage-note hidden>No e-field has been simulated for this head.</p>
+
+        <button type=button class="edge-left edge-tab" data-panel=ui aria-controls=ui aria-expanded=true aria-label="Hide controls">
+          <span class=edge-chev aria-hidden=true></span>
+        </button>
+        <button type=button class="edge-right edge-tab" data-panel=dist aria-controls=dist aria-expanded=true aria-label="Hide metrics">
+          <span class=edge-chev aria-hidden=true></span>
+        </button>
+
+        <div id=info class=hidden></div>
+
+        <div id=zoom>
+          <button id=zoom-out type=button title="zoom out">−</button>
+          <input type=range id=zoom-slider min=10 max=250 step=1 value=100 aria-label=zoom>
+          <button id=zoom-in type=button title="zoom in">+</button>
+          <button id=zoom-val type=button title="reset to fit">100%</button>
+        </div>
+
+        <a id=open-full class=open-full target=_blank rel=noopener hidden>Open full viewer</a>
+      </main>
+
+      <aside id=dist class=panel aria-label="aim 1 metrics">
+        <div id=aim1-metrics class=aim-pane role=tabpanel aria-labelledby=tab-aim1>
+        <section id=review-panel hidden>
+          <h2>Cap marker review</h2><p id=review-count role=status></p>
+          <p class=hint>Inspect every center in all three MRI planes. Selecting a row moves the slice crosshair.</p>
+          <details open><summary>Detection settings</summary>
+          <label>Starting profile <select id=detect-profile><option value=custom>Current / custom<option value=liquimark>LiquiMark 8 mm — review required</select></label>
+          <div class=detector-settings>
+            <label>Method <select id=detect-mode><option value=bright>Brightness<option value=local>Local contrast</select></label>
+            <label>Threshold (blank = auto)<input id=detect-threshold type=number min=0 step=any></label>
+            <label>Min volume mm³<input id=detect-min-volume type=number value=8 min=0></label>
+            <label>Max volume mm³<input id=detect-max-volume type=number value=800 min=1></label>
+            <label>Max elongation<input id=detect-elongation type=number value=3 min=1 step=.5></label>
+            <label>Max depth mm<input id=detect-depth type=number value=4 min=0></label>
+            <label>Max outside mm<input id=detect-distance type=number value=15 min=0></label>
+            <label>Expected count<input id=detect-expected type=number value=5 min=1 max=100></label>
+          </div><label><input id=detect-split type=checkbox> Separate touching peaks</label>
+          <button id=detect-run>Preview detection</button></details>
+          <p id=review-status class=hint role=status></p>
+          <div class=candidate-scroll><table id=candidate-table><thead><tr><th>Candidate<th>mm³ / ratio<th>Review<tbody></table></div>
+          <button id=review-save>Save reviewed changes</button>
+          <p class=hint>Save writes corrections and rebuilds derivatives. Live landmark previews reuse the cached scalp.</p>
+        </section>
+        <div id=metrics-panel><h2>Aim 1 Metrics</h2>
+        <div class=seg>
+          <button type=button data-metric=miss class=on title="distance from a placement to the MRI target">displacement</button>
+          <button type=button data-metric=pair title="distance between two placements of the same target">repeat</button>
+          <button type=button data-metric=tilt title="tilt of the coil face that follows from the mark being off">tilt</button>
+          <button type=button data-metric=orient title="total coil orientation difference, tilt plus handle yaw">orientation</button>
+        </div>
+
+        <div class=col-head>
+          <span id=subject-label>this head</span>
+          <span class=c-num>mean</span>
+          <span class=c-num>p95</span>
+        </div>
+        <div id=dist-charts></div>
+
+        <button class="disclose section" id=group-head type=button aria-expanded=false aria-controls=group>
+          <span class=chev aria-hidden=true></span><span id=group-title>Brainsight results</span>
+        </button>
+        <div id=group hidden></div></div>
+        </div>
+
+        <div id=aim2-metrics class=aim-pane role=tabpanel aria-labelledby=tab-aim2 hidden>
+          <h2>Aim 2 E-field</h2>
+          <div id=a2-empty class=a2-empty hidden>
+            <p>No e-field for <span id=a2-empty-subject></span> yet. For the Ernie demo, from the repository root:</p>
+            <pre><code>python -m efield.demo_ernie</code></pre>
+            <p>docs/efield.md covers the downloads and exporting other runs.</p>
+          </div>
+          <div id=a2-body>
+            <div id=a2-roi class=a2-roi></div>
+
+            <figure id=a2-slice-fig class=a2-slice>
+              <div class=a2-frame>
+                <canvas id=a2-slice-canvas role=img></canvas>
+                <span class=a2-where id=a2-where></span>
+                <span class="a2-o a2-o-l" id=a2-o-l></span>
+                <span class="a2-o a2-o-r" id=a2-o-r></span>
+                <span class="a2-o a2-o-t" id=a2-o-t></span>
+                <span class="a2-o a2-o-b" id=a2-o-b></span>
+              </div>
+              <figcaption class=hint id=a2-slice-note hidden>The perpendicular field is only defined on the cortex, so the slice shows the anatomy alone.</figcaption>
+            </figure>
+
+            <div class=a2-scale>
+              <div class=a2-scale-head>
+                <span id=a2-scale-title>Field strength</span><span id=a2-scale-unit>V/m at 1 A/µs</span>
+              </div>
+              <div class=a2-bar id=a2-bar aria-hidden=true></div>
+              <div class=a2-ticks><span id=a2-tick-min>0</span><span id=a2-tick-mid></span><span id=a2-tick-max></span></div>
+              <div class=a2-ends id=a2-ends hidden><span id=a2-end-lo></span><span id=a2-end-hi></span></div>
+              <div class="a2-cut-row row">
+                <label for=a2-cut><span id=a2-cut-label>colour from</span> <span id=a2-cut-val class=val></span></label>
+                <input type=range id=a2-cut min=0 max=90 step=5 value=20>
+              </div>
+              <div class="a2-cut-row row">
+                <label for=a2-didt>coil current <span id=a2-didt-val class=val>1 A/µs</span></label>
+                <input type=range id=a2-didt min=1 max=200 step=1 value=1>
+                <p class="a2-didt-note hint">The field grows in step with the current. Set this to the stimulator's dI/dt at the treatment intensity. The simulation ran at 1 A/µs.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <dialog id=sources aria-labelledby=sources-title>
+      <div class=sources-inner>
+        <header class=sources-head>
+          <h2 id=sources-title>Sources, licenses and disclaimer</h2>
+          <button type=button class=sources-close id=sources-close aria-label=Close>
+            <svg width=16 height=16 aria-hidden=true viewBox="0 0 16 16"><path fill=none stroke=currentColor stroke-linecap=round stroke-width=1.6 d="m4 4 8 8m0-8-8 8"/></svg>
+          </button>
+        </header>
+
+        <div class=sources-body>
+          <p class=sources-note>
+            For research and teaching only, not for clinical decisions. Fields are simulated at 1 A/µs, and the
+            Ernie coil placements are a demo, not the study protocol. Every head shown is openly licensed sample data.
+          </p>
+
+          <h3>Data</h3>
+          <ul class=src-list>
+            <li><span>Ernie</span><a href=https://doi.org/10.1109/EMBC.2015.7318340 target=_blank rel=noopener>Thielscher et al. 2015</a><a class="lic lic-nc" href=https://creativecommons.org/licenses/by-nc/4.0/ target=_blank rel=noopener>CC BY-NC 4.0</a></li>
+            <li><span>T1 to T5</span><a href=https://doi.org/10.1371/journal.pone.0156859 target=_blank rel=noopener>Lepping et al. 2016</a><a class=lic href=https://openneuro.org/datasets/ds000171 target=_blank rel=noopener>ODC-PDDL</a></li>
+            <li><span>MNI152</span><a href=https://doi.org/10.1016/j.neuroimage.2010.07.033 target=_blank rel=noopener>Fonov et al. 2011</a><a class=lic href=https://www.mcgill.ca/bic/software/tools-data-analysis/anatomical-mri/atlases/icbm152-non-linear-2009 target=_blank rel=noopener>MNI notice</a></li>
+          </ul>
+
+          <h3>Field model</h3>
+          <ul class=src-list>
+            <li><span>SimNIBS 4</span><a href=https://doi.org/10.1007/978-3-030-21293-3_1 target=_blank rel=noopener>Saturnino et al. 2019</a><span class=lic>GPL-3.0</span></li>
+            <li><span>CHARM</span><a href=https://doi.org/10.1016/j.neuroimage.2020.117044 target=_blank rel=noopener>Puonti et al. 2020</a><span class=lic>GPL-3.0</span></li>
+            <li><span>D70 coil</span><a href=https://doi.org/10.1016/j.brs.2022.04.017 target=_blank rel=noopener>Drakaki et al. 2022</a><span class=lic>GPL-3.0</span></li>
+          </ul>
+
+          <h3>Software</h3>
+          <ul class=src-list>
+            <li><span>three.js</span><a href=https://threejs.org target=_blank rel=noopener>threejs.org</a><span class=lic>MIT</span></li>
+            <li><span>NiiVue</span><a href=https://niivue.com target=_blank rel=noopener>niivue.com</a><span class=lic>BSD-2-Clause</span></li>
+            <li><span>Colour maps</span><a href=https://research.google/blog/turbo-an-improved-rainbow-colormap-for-visualization/ target=_blank rel=noopener>Turbo, ColorBrewer</a><span class=lic>Apache-2.0</span></li>
+          </ul>
+
+          <p class=sources-fine>MNI152: Copyright (C) 1993–2004 Louis Collins, McConnell Brain Imaging Centre, Montreal Neurological Institute, McGill University.</p>
+        </div>
+      </div>
+    </dialog>
+
+    <div id=fatal role=alert hidden></div>
+
+    <script type=module src=viewer.59849639.js></script>
+  
+
