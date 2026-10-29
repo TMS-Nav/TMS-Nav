@@ -2,8 +2,11 @@
 #
 # copy this file to saves/fmri_targets.csv and fill it in. run_efield.py reads it
 # and draws each region of interest at the target, which is what makes the numbers
-# mean "field delivered to the intended target". without it the roi falls back to a
-# guess under the coil and every line of the output says so.
+# mean "field delivered to the intended target". a site with no row here is not
+# simulated, and the output says so.
+#
+# subject is the id in the brainsight export file name, sub-<ID>, the same id the
+# scan in saves/ and the head model are named by.
 #
 # space is either
 #   subject   the coordinate is in the subject's own t1, in mm, the same space the
@@ -12,5 +15,5 @@
 #
 # site is one of SMA, F4, C3, C4, Cz. note is free text and may be left empty.
 subject,site,x,y,z,space,note
-T1,SMA,-4.2,-2.1,62.0,subject,example only, replace with the real target
-T1,F4,38.5,34.0,32.4,subject,example only, replace with the real target
+sub-001,SMA,-4.2,-2.1,62.0,subject,example only, replace with the real target
+sub-001,F4,38.5,34.0,32.4,subject,example only, replace with the real target

@@ -1,206 +1,173 @@
-# aim 2 driver. for every subject in saves/ find or plan the head model, build
-# the coil poses, write the simnibs job, and (dry run by default) ask the
-# simnibs python to validate it. results that exist get folded into the long
-# table and the site statistics. mirrors run_pipeline.py, which is the aim 1 half.
+# aim 2 driver. reads the recorded coil poses out of the brainsight exports,
+# finds each subject's head model, puts the roi at the r01 target, writes the
+# simnibs job and (dry run by default) asks the simnibs python to run it.
+# results that exist get folded into the long table and the site statistics.
+# mirrors run_pipeline.py, which is the aim 1 half.
 #
-#   python run_efield.py                       dry run, every subject in saves/
-#   python run_efield.py --subjects T1 T2      a few of them
-#   python run_efield.py --m2m <path>          use a finished m2m (eg the simnibs
-#                                              ernie example) for an end to end dry run
-#   python run_efield.py --run                 actually simulate, hours, only on purpose
-#   python run_efield.py --charm               actually build the head models, same
+#   python run_efield.py                       dry run, every subject in saves/brainsight/
+#   python run_efield.py --subjects 001 002    a few of them
+#   python run_efield.py --run                 actually simulate, only on purpose
+#   python run_efield.py --charm               actually build missing head models, same
 #
-# where the poses come from, in order of preference:
-#   1. saves/brainsight/<subject>_coil_pose_samples.txt, the real recorded poses
-#   2. the m2m's own eeg_positions csv, when the head model is complete. F4 is
-#      the F4 electrode and SMA is between Fz and Cz on the midline. these are in
-#      the head model's own space, which is what matters for a dry run on ernie
-#   3. viewer/src/data/<subject>/markers.json, the aim 1 targets on the subject's
-#      own scalp. cheap to read (no mri reprocessing) and in the scan's RAS, so
-#      right once that scan has been through charm. run run_pipeline.py first
-# for 2 and 3 the MRI method IS the target and the EEG method is the target
-# nudged by a documented offset, so the pairing code has something to pair.
+# what each subject needs. when a piece is missing the subject or site is
+# skipped and the reason printed, nothing is made up in its place:
+#   saves/brainsight/sub-<ID>_coil_pose_samples.txt   the recorded poses, exported in
+#       NIfTI:Aligned, samples named sub-<ID>_EEGCAP_<SITE>_POSE_REP<n> and
+#       sub-<ID>_MRI_<SITE>_POSE_REP<n>
+#   saves/fmri_targets.csv                            the r01 target per site, subject
+#                                                     column sub-<ID>
+#   saves/m2m/m2m_sub-<ID>                            the head model, charm run on the
+#                                                     same t1 brainsight was given
 import argparse
-import csv
 import subprocess
-import sys
-from pathlib import Path
-
-import numpy as np
 
 from efield import config
-from efield.brainsight import make_name, poses_from_export
-from efield.headmodel import charm_command, find_m2m, format_command, run_charm
+from efield.brainsight import poses_from_export
+from efield.config import FMRI_TARGETS
+from efield.headmodel import find_m2m, format_command, run_charm
 from efield.job import Job, dryrun_path, results_path, runner_command
 from efield.metrics import format_site_stats, load_results, long_rows, site_stats, write_csv
-from efield.poses import CoilPose, displacement_mm, orientation_deg, tilt_deg
-from efield.config import FMRI_TARGETS
+from efield.poses import displacement_mm, orientation_deg, tilt_deg
 from efield.roi import load_target_table, rois_for_subject
-from src.stats import rotation_about
+from src.aim1 import export_files
+from src.mri_inputs import SAVE_DIR, find_mris
 
-SAVE_DIR = Path("saves")
-VIEWER_DATA_DIR = Path("viewer") / "src" / "data"
-
-# the study sites the poses are built for. c3, c4, cz are references and get
-# no coil in the protocol
+# the study sites that get a coil. c3, c4 and cz are cap references only
 SITES = ("SMA", "F4")
 
-# the stand in eeg cap error, one placement per rep. shift along the coil x
-# axis in mm, face tilt about the handle in degrees, handle yaw about the
-# normal in degrees. the sizes are about one sd of aim 1's noise model
-# (2 mm, 5 deg yaw) so the dry run numbers look like the real thing will
-EEG_NUDGE = {1: (3.0, 3.0, 5.0), 2: (-2.0, -2.0, -4.0)}
-# the mri guided repeat error, smaller, the navigator's own tre
-MRI_NUDGE = {1: (0.0, 0.0, 0.0), 2: (0.8, 0.5, 1.5)}
+
+def subject_id(sub):
+    """sub-<ID> whether or not the prefix was typed."""
+
+    return sub if sub.startswith("sub-") else f"sub-{sub}"
 
 
-# --- stand in poses --------------------------------------------------------------
-def nudge(pose, shift_mm, tilt, yaw, **kw):
-    """A copy of pose moved shift_mm along its x axis, tilted about its handle, handle yawed."""
+# --- the recorded poses -----------------------------------------------------------
+def load_poses(folder):
+    """{subject: [CoilPose]} and {subject: [export file]} from every export in folder.
 
-    x, y, z = pose.xdir, pose.ydir, pose.zdir
-    R_tilt = rotation_about(y, tilt)
-    z2 = R_tilt @ z
-    y2 = rotation_about(z2, yaw) @ (R_tilt @ y)
-    return CoilPose(centre=pose.centre + x * shift_mm, ydir=y2, zdir=z2, **kw)
+    only NIfTI:Aligned exports are used. aim 1 can flip a brainsight LPS export
+    because distances and angles survive the flip, but simnibs needs the pose in
+    the exact scanner space of the head model, so those files are reported and
+    left out. a pose named twice keeps the later one, as in src/aim1.py
+    """
 
-
-def both_methods(subject, site, reference):
-    """MRI and EEG poses, two reps each, off one reference pose at a site."""
-
-    out = []
-    for method, table in (("MRI", MRI_NUDGE), ("EEG", EEG_NUDGE)):
-        for rep, (s, t, yaw) in table.items():
-            out.append(nudge(reference, s, t, yaw, name=make_name(subject, method, site, rep),
-                             site=site, method=method, rep=rep))
-    return out
-
-
-def read_eeg_cap(path):
-    """{label: xyz} from a simnibs eeg_positions csv."""
-
-    pts = {}
-    with open(path, newline="") as f:
-        for row in csv.reader(f):
-            if len(row) >= 5 and row[0] in ("Electrode", "ReferenceElectrode", "Fiducial"):
-                pts[row[4]] = np.array([float(v) for v in row[1:4]])
-    return pts
-
-
-def poses_from_eeg_cap(subject, m2m):
-    """Stand in poses off the head model's own 10-20 positions."""
-
-    pts = read_eeg_cap(m2m.eeg_cap)
-    centre_of_head = np.mean([pts[k] for k in ("Nz", "Iz", "LPA", "RPA", "Cz") if k in pts], axis=0)
-    sites = {"F4": pts["F4"], "SMA": 0.5 * (pts["Fz"] + pts["Cz"])}
-    poses = []
-    for site, p in sites.items():
-        # radial direction as the outward normal. the runner snaps the coil onto
-        # the skin with the real normal, this only has to be roughly right
-        n_out = p - centre_of_head
-        n_out /= np.linalg.norm(n_out)
-        # handle pointing backwards, the usual for a frontal site. a stand in
-        ref = CoilPose.from_scalp_point(p, n_out, [0.0, -1.0, 0.0], site=site)
-        poses += both_methods(subject, site, ref)
-    return poses
-
-
-def poses_from_markers(subject, markers_path):
-    """Stand in poses off the aim 1 targets the viewer already has."""
-
-    import json
-    with open(markers_path) as f:
-        markers = json.load(f)
-    poses = []
-    for t in markers["targets"]:
-        if t["label"] not in SITES:
+    keyed, sources = {}, {}
+    for path in export_files(folder):
+        try:
+            poses, skipped = poses_from_export(path)
+        except (ValueError, KeyError, IndexError) as err:
+            print(f"  {path.name}: not used, {err}")
             continue
-        # handle backwards here too, projected onto the coil plane by CoilPose
-        ref = CoilPose.from_scalp_point(t["position"], t["normal"], [0.0, -1.0, 0.0], site=t["label"])
-        poses += both_methods(subject, t["label"], ref)
-    return poses
-
-
-def build_poses(subject, m2m, brainsight_root):
-    """The poses for a subject and where they came from, see the header."""
-
-    bs = Path(brainsight_root) / f"{subject}_coil_pose_samples.txt"
-    if bs.exists():
-        poses, skipped = poses_from_export(bs)
         if skipped:
-            print(f"  brainsight: skipped {len(skipped)} rows not named per protocol: {skipped[:4]}")
-        return poses, f"brainsight {bs}", False
-    if m2m is not None and m2m.complete and m2m.has_eeg_positions:
-        return poses_from_eeg_cap(subject, m2m), f"stand in, eeg cap of {m2m.path.name}", True
-    markers = VIEWER_DATA_DIR / subject / "markers.json"
-    if markers.exists():
-        return poses_from_markers(subject, markers), f"stand in, {markers}", True
-    return [], "none (no brainsight export, no m2m eeg cap, no markers.json)", False
+            print(f"  {path.name}: skipped {len(skipped)} samples not named per the protocol:"
+                  f" {', '.join(skipped[:6])}{' ...' if len(skipped) > 6 else ''}")
+        for p in poses:
+            if p.site not in SITES:
+                continue
+            subject = subject_id(p.extra["subject"])
+            key = (subject, p.method, p.site, int(p.rep))
+            if key in keyed:
+                print(f"  {subject} {p.method} {p.site} rep {p.rep}: named twice, using the later one ({path.name})")
+            keyed[key] = p
+            sources.setdefault(subject, [])
+            if path.name not in sources[subject]:
+                sources[subject].append(path.name)
+
+    by_subject = {}
+    for (subject, *_), p in keyed.items():
+        by_subject.setdefault(subject, []).append(p)
+    return by_subject, sources
+
+
+# --- the head model ------------------------------------------------------------------
+def find_t1(subject):
+    """(path, None) for the one structural scan of this subject under saves/, else (None, why).
+
+    a scan belongs to the subject when a folder on its path is named sub-<ID> or the
+    file name starts with it. charm has to get the same t1 brainsight was given, so
+    zero or several candidates is reported rather than picked from
+    """
+
+    hits = [p for p in find_mris(SAVE_DIR)
+            if subject in p.relative_to(SAVE_DIR).parts[:-1]
+            or p.name.split(".")[0] == subject or p.name.startswith(subject + "_")]
+    if len(hits) == 1:
+        return hits[0], None
+    if not hits:
+        return None, f"no t1 for {subject} under {SAVE_DIR}"
+    return None, f"{len(hits)} scans could be {subject}'s t1: " + ", ".join(str(h) for h in hits)
+
+
+def head_model(subject, args):
+    """The complete m2m for a subject, or None after saying what is missing."""
+
+    root = args.m2m_root
+    m2m = find_m2m(subject, roots=[root]) or find_m2m(subject[4:], roots=[root])
+    if m2m is None:
+        print(f"  no head model, looked for m2m_{subject} and m2m_{subject[4:]} in {root}")
+        t1, why = find_t1(subject)
+        if t1 is None:
+            print(f"  {why}, so charm cannot be run either")
+            return None
+        run_charm(subject, t1, out_root=root, dry_run=not args.charm)
+        if not args.charm:
+            print("    (pass --charm to build it, about an hour per head)")
+            return None
+        m2m = find_m2m(subject, roots=[root])
+        if m2m is None:
+            print(f"  charm finished but m2m_{subject} is not in {root}")
+            return None
+    print("  " + m2m.report())
+    if not m2m.complete or not m2m.has_central_surfaces:
+        print("  head model is not complete, not simulated")
+        return None
+    return m2m
 
 
 # --- one subject --------------------------------------------------------------------
-def process(subject, args, rows, targets):
+def process(subject, poses, source, args, rows, targets):
     print(f"\n=== {subject} ===")
-    t1 = SAVE_DIR / f"{subject}.nii.gz"
+    print(f"  poses from {', '.join(source)}: {len(poses)}")
 
-    if args.m2m:
-        m2m = find_m2m(args.m2m)
-    else:
-        m2m = find_m2m(subject, roots=[Path(args.m2m_root)] + config.SAMPLE_M2M_ROOTS)
+    # the pose to pose numbers aim 1 also reports, here on the same poses
+    by_key = {p.key(): p for p in poses}
+    for site in sorted({p.site for p in poses}):
+        for rep in sorted({p.rep for p in poses if p.site == site and p.method == "EEG"}):
+            a = by_key.get((site, "EEG", rep))
+            b = by_key.get((site, "MRI", rep))
+            if b is None:
+                mri = [p for p in poses if p.site == site and p.method == "MRI"]
+                b = mri[0] if len(mri) == 1 else None
+            if a and b:
+                print(f"  {site:4s} eeg rep {rep} vs mri rep {b.rep}  {displacement_mm(a, b):.1f} mm, "
+                      f"tilt {tilt_deg(a, b):.1f} deg, orientation {orientation_deg(a, b):.1f} deg")
 
-    if m2m is None:
-        print(f"no m2m for {subject}")
-        if t1.exists():
-            run_charm(subject, t1, out_root=args.m2m_root, dry_run=not args.charm)
-            if not args.charm:
-                print("    (pass --charm to build it, about an hour per head)")
-        else:
-            print(f"    and no {t1} to build one from")
-    else:
-        print(m2m.report())
-
-    poses, source, stand_in = build_poses(subject, m2m, args.brainsight_root)
+    # the roi is the r01 target. a site without one is not simulated, the field
+    # would have nowhere meaningful to be read
+    rois, missing = rois_for_subject(subject, poses, table=targets)
+    if missing:
+        print(f"  no r01 target for {', '.join(missing)} in {args.fmri_targets}, not simulated")
+        poses = [p for p in poses if p.site not in missing]
     if not poses:
-        print(f"  no poses: {source}")
+        print("  nothing left to simulate")
         return
-    # the roi goes at the r01's own fmri target when one has been supplied. that
-    # is the whole point, it makes the numbers "field delivered to the intended
-    # target" instead of "field delivered under the coil". a site with no target
-    # falls back to a guess under the coil and says so on every run
-    rois, guessed = rois_for_subject(subject, poses, table=targets)
     for r in rois:
-        if not r.is_fallback:
-            where = "mni" if r.kind == "mni_sphere" else "subject"
-            coords = r.mni if r.kind == "mni_sphere" else r.centre
-            print(f"    roi {r.site:4s} at the fmri target, {where} "
-                  f"[{', '.join(f'{v:.1f}' for v in coords)}]")
-    if guessed:
-        print(f"    NO FMRI TARGET for {', '.join(guessed)}. those rois are a guess under")
-        print(f"    the coil, not the intended target. fill in {FMRI_TARGETS}")
+        where = "mni" if r.kind == "mni_sphere" else "subject"
+        coords = r.mni if r.kind == "mni_sphere" else r.centre
+        print(f"  roi {r.site:4s} at the r01 target, {where} [{', '.join(f'{v:.1f}' for v in coords)}]")
 
-    job = Job(subject=subject, m2m=str(m2m.path) if m2m else str(Path(args.m2m_root) / f"m2m_{subject}"),
-              poses=poses, rois=rois, snap_to_skin=stand_in, poses_source=source)
-    if stand_in:
-        job.notes.append("poses are STAND INS built off a target plus a fixed nudge, not recorded coil poses")
-    if guessed:
-        job.notes.append(
-            "rois at " + ", ".join(guessed) + " are a guess under the coil, no fmri target supplied")
+    m2m = head_model(subject, args)
+    if m2m is None:
+        return
+
+    job = Job(subject=subject, m2m=str(m2m.path), poses=poses, rois=rois,
+              poses_source=", ".join(source))
     job_path = job.write_json()
     print(job.summary())
     print(f"  wrote {job_path}")
 
-    # the pose to pose numbers aim 1 also reports, here on the actual poses
-    by_key = {p.key(): p for p in poses}
-    for site in sorted({p.site for p in poses}):
-        for rep in sorted({p.rep for p in poses if p.site == site}):
-            a, b = by_key.get((site, "EEG", rep)), by_key.get((site, "MRI", rep))
-            if a and b:
-                print(f"  {site:4s} rep {rep}: eeg vs mri  {displacement_mm(a, b):.1f} mm, "
-                      f"tilt {tilt_deg(a, b):.1f} deg, orientation {orientation_deg(a, b):.1f} deg")
-
-    if m2m is None or not m2m.complete:
-        print("  head model not complete, runner not called")
-    elif args.no_runner:
+    if args.no_runner:
         print("  --no-runner, job written only")
     elif not config.simnibs_available():
         print(f"  simnibs python not found at {config.SIMNIBS_PYTHON}, runner not called")
@@ -219,22 +186,20 @@ def process(subject, args, rows, targets):
 
     res = results_path(job)
     if res.exists():
-        r = load_results(res)
-        new = long_rows(r)
+        new = long_rows(load_results(res))
         rows += new
         print(f"  results.json found, {len(new)} rows added to the long table")
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="aim 2 driver, dry run unless told otherwise")
-    ap.add_argument("--subjects", nargs="*", help="subject ids, default every saves/*.nii.gz")
-    ap.add_argument("--m2m-root", default=str(config.M2M_ROOT), help="where m2m_<subject> folders live")
-    ap.add_argument("--m2m", default=None, help="one m2m folder to use for every subject, eg m2m_ernie")
+    ap.add_argument("--subjects", nargs="*", help="subject ids, 001 or sub-001, default every subject in the exports")
+    ap.add_argument("--m2m-root", default=str(config.M2M_ROOT), help="where m2m_sub-<ID> folders live")
     ap.add_argument("--brainsight-root", default=str(config.BRAINSIGHT_ROOT))
-    ap.add_argument("--fmri-targets", default=str(config.FMRI_TARGETS),
-                    help="csv of the r01 fmri targets, see efield/fmri_targets_example.csv")
+    ap.add_argument("--fmri-targets", default=str(FMRI_TARGETS),
+                    help="csv of the r01 targets, see efield/fmri_targets_example.csv")
     ap.add_argument("--dry-run", action="store_true", help="the default, accepted for clarity")
-    ap.add_argument("--run", action="store_true", help="really run simnibs. hours per subject")
+    ap.add_argument("--run", action="store_true", help="really run simnibs")
     ap.add_argument("--charm", action="store_true", help="really build missing head models with charm")
     ap.add_argument("--no-runner", action="store_true", help="write the jobs, do not call simnibs at all")
     args = ap.parse_args(argv)
@@ -245,24 +210,32 @@ def main(argv=None):
     print(config.describe())
     if config.simnibs_available():
         print(f"simnibs version  {config.simnibs_version() or 'could not be read'}")
-
-    subjects = args.subjects or sorted(p.name.split(".")[0] for p in SAVE_DIR.glob("*.nii.gz"))
-    if not subjects:
-        print(f"no subjects, nothing in {SAVE_DIR}")
-        return
-    print(f"subjects         {', '.join(subjects)}")
     print(f"mode             {'RUN' if args.run else 'dry run'}{', CHARM' if args.charm else ''}")
 
-    # one read of the fmri target table for the whole run
+    # one read of the r01 target table for the whole run
     targets = load_target_table(args.fmri_targets)
     if targets:
-        print(f"fmri targets     {len(targets)} rows from {args.fmri_targets}")
+        print(f"r01 targets      {len(targets)} rows from {args.fmri_targets}")
     else:
-        print(f"fmri targets     NONE at {args.fmri_targets}, rois fall back to a guess under the coil")
+        print(f"r01 targets      NONE at {args.fmri_targets}, no site can be simulated without one")
+
+    print(f"brainsight       {args.brainsight_root}")
+    by_subject, sources = load_poses(args.brainsight_root)
+    subjects = sorted(by_subject)
+    if args.subjects:
+        wanted = [subject_id(s) for s in args.subjects]
+        for s in wanted:
+            if s not in by_subject:
+                print(f"  {s}: no poses in any export")
+        subjects = [s for s in wanted if s in by_subject]
+    if not subjects:
+        print(f"no subjects, no protocol named SMA or F4 poses in {args.brainsight_root}")
+        return
+    print(f"subjects         {', '.join(subjects)}")
 
     rows = []
     for s in subjects:
-        process(s, args, rows, targets)
+        process(s, by_subject[s], sources[s], args, rows, targets)
 
     print()
     if rows:
@@ -270,8 +243,7 @@ def main(argv=None):
         print(f"wrote {out} ({len(rows)} rows)")
         print(format_site_stats(site_stats(rows)))
     else:
-        print("no results.json anywhere yet, so no long table. the endpoints need a real run.")
-        print("analysis/efield_stats.py shows the statistics on a synthetic table meanwhile.")
+        print("no results.json anywhere yet, so no long table. run with --run to simulate.")
 
 
 if __name__ == "__main__":

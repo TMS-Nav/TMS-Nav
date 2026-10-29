@@ -8,6 +8,7 @@ import { CSS2DRenderer, CSS2DObject } from "three/examples/jsm/renderers/CSS2DRe
 
 import { DATASETS, AIM1 } from "./datasetRegistry.js";
 import { defaultDatasetKey, isTemplateDataset, loadDatasetAssets } from "./datasetAssets.mjs";
+import { createAim2View } from "./aim2.js";
 import { createLandmarkEditor } from "./landmarkEditor.js";
 import { createSubjectReview } from "./subjectReview.js";
 
@@ -48,6 +49,8 @@ try {
 // past 2x a retina screen only costs gpu time, it does not look any sharper
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(stage.clientWidth, stage.clientHeight);
+// the aim 2 slice cuts the cortex open with a per material clipping plane
+renderer.localClippingEnabled = true;
 
 // html labels ride on top of the canvas
 const labelRenderer = new CSS2DRenderer();
@@ -80,7 +83,11 @@ const landmarkGroup = new THREE.Group();
 const mcGroup = new THREE.Group();
 const eegGroup = new THREE.Group();
 const arcGroup = new THREE.Group();
-scene.add(skullGroup, fiducialGroup, scalpGroup, coilGroup, targetGroup, landmarkGroup, mcGroup, eegGroup, arcGroup);
+// everything aim 1 hangs off one root, so the aim tabs swap a whole view without
+// touching the layer toggles underneath
+const aim1Root = new THREE.Group();
+aim1Root.add(skullGroup, fiducialGroup, scalpGroup, coilGroup, targetGroup, landmarkGroup, mcGroup, eegGroup, arcGroup);
+scene.add(aim1Root);
 
 // which layers are on. choices survive a reload via localStorage, and on start the
 // same state is pushed onto both the checkbox and the layer, so the two cannot
@@ -256,6 +263,14 @@ review = createSubjectReview({
 });
 let pointerStart = null;
 
+// which aim tab is on screen
+let currentAim = 1;
+const aim2 = createAim2View({
+  loadPLY,
+  resetZoom: () => setZoomPercent(ZOOM_FIT),
+});
+scene.add(aim2.group);
+
 function aspect() {
   return Math.max(stage.clientWidth, 1) / Math.max(stage.clientHeight, 1);
 }
@@ -329,12 +344,18 @@ async function loadDataset(key) {
   landmarkEditor.load(key, markers, [...landmarkGroup.children, ...fiducialGroup.children], scalpGeo);
   if (template && monteCarlo) addMonteCarlo(monteCarlo);
   else renderDistances();
+  // both tabs open on the whole head, framed the same way
   frameCamera(scalpGeo);
 
   hideInfo();
   restoreUiState();
   stage.dataset.subject = key;
   review.load(key,template);
+  // the review load picks the right panel by subject kind, the aim 1 view decides it
+  syncAim1Panel();
+
+  // the e field is a few MB, so it streams in after the head is already on screen
+  aim2.load(ds, scalpGeo, currentSubject).catch((err) => console.error("failed to load the e-field", err));
 }
 
 // tear down the previous subject. the groups themselves stay so the layer toggles
@@ -395,7 +416,8 @@ function buildSubjectPicker() {
     loadDataset(e.target.value).catch((err) => fail(`Failed to load subject: ${err.message}`));
   });
 
-  const initial = defaultDatasetKey(DATASETS);
+  // ernie opens first: the one head with both the aim 1 cap and an aim 2 field
+  const initial = DATASETS.Ernie ? "Ernie" : defaultDatasetKey(DATASETS);
   sel.value = initial;
   return initial;
 }
@@ -992,9 +1014,102 @@ function setupPanels() {
   }
 }
 
+// ---- aim tabs -----------------------------------------------------------------------
+// two views of the same head, one per aim of the study. the tab is kept in the url
+// hash so a link can open straight on aim 2, and remembered for the next visit
+const AIM_STORAGE_KEY = "tms-nav-aim";
+
+function initialAim() {
+  const hash = window.location.hash.replace("#", "");
+  if (hash === "aim1" || hash === "aim2") return Number(hash.slice(3));
+  try {
+    return localStorage.getItem(AIM_STORAGE_KEY) === "2" ? 2 : 1;
+  } catch {
+    return 1;
+  }
+}
+
+// both aims frame the same head the same way, so switching tabs leaves the camera
+// where it is
+function setAim(n, { focus = false } = {}) {
+  // the anatomical MRI view is part of aim 1. leaving for aim 2 goes back to the 3D
+  // head first, through the MRI viewer's own button, so its state stays its own
+  const mriOpen = !document.getElementById("mri-panel").hidden;
+  if (n === 2 && mriOpen) document.getElementById("tab-head").click();
+  currentAim = n;
+  aim1Root.visible = n === 1;
+  aim2.setVisible(n === 2);
+
+  const bar = document.getElementById("aim-tabs");
+  bar.dataset.aim = String(n);
+  document.getElementById("app").dataset.aim = String(n);
+  for (const tab of bar.querySelectorAll('[role="tab"]')) {
+    const on = Number(tab.dataset.aim) === n;
+    tab.setAttribute("aria-selected", on ? "true" : "false");
+    tab.tabIndex = on ? 0 : -1;
+    if (on && focus) tab.focus();
+  }
+  for (const pane of document.querySelectorAll(".aim-pane")) {
+    pane.hidden = !pane.id.startsWith(`aim${n}`);
+  }
+  document.getElementById("dist").setAttribute("aria-label", n === 1 ? "aim 1 metrics" : "aim 2 e-field");
+  document.getElementById("tab-aim1").title = "Where the cap and neuronavigation put the coil";
+  document.getElementById("tab-aim2").title = "The electric field each placement puts into the brain";
+
+  hideInfo();
+
+  history.replaceState(null, "", `${window.location.pathname}${window.location.search}#aim${n}`);
+  try {
+    localStorage.setItem(AIM_STORAGE_KEY, String(n));
+  } catch {
+    // the session still works, it just forgets
+  }
+}
+
+// inside aim 1 the right panel follows the view: the 3D head shows the statistics,
+// the anatomical MRI shows the cap marker review that is done on it
+function syncAim1Panel() {
+  const mri = !document.getElementById("mri-panel").hidden;
+  document.getElementById("review-panel").hidden = !mri;
+  document.getElementById("metrics-panel").hidden = mri;
+}
+
+function bindAimTabs() {
+  // after the MRI viewer's own handlers, which open and close its panel
+  for (const id of ["tab-head", "tab-mri"]) {
+    document.getElementById(id).addEventListener("click", syncAim1Panel);
+  }
+  const tabs = [...document.querySelectorAll('#aim-tabs [role="tab"]')];
+  for (const tab of tabs) {
+    tab.addEventListener("click", () => {
+      const n = Number(tab.dataset.aim);
+      if (n !== currentAim) setAim(n);
+    });
+    // arrow keys move along the tab list the way a tablist is expected to work
+    tab.addEventListener("keydown", (e) => {
+      const i = tabs.indexOf(tab);
+      let next = null;
+      if (e.key === "ArrowRight") next = tabs[(i + 1) % tabs.length];
+      if (e.key === "ArrowLeft") next = tabs[(i - 1 + tabs.length) % tabs.length];
+      if (e.key === "Home") next = tabs[0];
+      if (e.key === "End") next = tabs[tabs.length - 1];
+      if (!next) return;
+      e.preventDefault();
+      setAim(Number(next.dataset.aim), { focus: true });
+    });
+  }
+  window.addEventListener("hashchange", () => {
+    const n = initialAim();
+    if (n !== currentAim) setAim(n);
+  });
+  setAim(initialAim());
+  // a timer rather than a frame callback, which a background tab never runs
+  setTimeout(() => document.getElementById("aim-tabs").classList.add("ready"), 50);
+}
+
 function setDistMetric(metric) {
   distMetric = metric;
-  for (const b of document.querySelectorAll("#dist .seg button")) {
+  for (const b of document.querySelectorAll("#aim1-metrics .seg button")) {
     b.classList.toggle("on", b.dataset.metric === metric);
   }
   renderDistances();
@@ -1138,6 +1253,8 @@ function syncZoomUi() {
 
 function onClick(event) {
   if (pointerStart && Math.hypot(event.clientX - pointerStart.x, event.clientY - pointerStart.y) > 5) return;
+  // the aim 1 markers are hidden on the aim 2 tab, and a raycast does not care
+  if (currentAim !== 1) return;
   const box = renderer.domElement.getBoundingClientRect();
   pointer.x = ((event.clientX - box.left) / box.width) * 2 - 1;
   pointer.y = -((event.clientY - box.top) / box.height) * 2 + 1;
@@ -1258,11 +1375,12 @@ function bindUI() {
   }
 
   // which metric the panel shows
-  for (const b of document.querySelectorAll("#dist .seg button")) {
+  for (const b of document.querySelectorAll("#aim1-metrics .seg button")) {
     b.addEventListener("click", () => setDistMetric(b.dataset.metric));
   }
 
   setupPanels();
+  bindAimTabs();
 
   // the two disclosure headers, the simulation settings and the results block
   for (const [headId, bodyId] of [["mc-note-head", "mc-note"], ["group-head", "group"]]) {

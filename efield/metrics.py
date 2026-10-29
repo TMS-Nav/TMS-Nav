@@ -70,14 +70,28 @@ def roi_for_site(entry, site):
 
 
 def pair_poses(results):
-    """{(site, rep): {'EEG': block, 'MRI': block}} from a results.json dict."""
+    """{(site, eeg rep): {'EEG': block, 'MRI': block}} from a results.json dict.
 
-    pairs = {}
+    each eeg placement is paired with the mri guided placement of the same rep.
+    when the mri side has only one placement at a site, every eeg rep is paired
+    with that one. the same rule src/aim1.py uses for the geometry
+    """
+
+    by = {}
     for entry in results.get("poses", []):
         block = roi_for_site(entry, entry.get("site", ""))
         if block is None or entry.get("method") not in ("EEG", "MRI"):
             continue
-        pairs.setdefault((entry["site"], int(entry.get("rep", 0))), {})[entry["method"]] = block
+        by.setdefault(entry["site"], {}).setdefault(entry["method"], {})[int(entry.get("rep", 0))] = block
+
+    pairs = {}
+    for site, methods in by.items():
+        eeg, mri = methods.get("EEG", {}), methods.get("MRI", {})
+        only = next(iter(mri.values())) if len(mri) == 1 else None
+        for rep, e in eeg.items():
+            m = mri.get(rep, only)
+            if m is not None:
+                pairs[(site, rep)] = {"EEG": e, "MRI": m}
     return pairs
 
 
@@ -111,8 +125,6 @@ def long_rows(results):
                 rows.append({"subject": subject, "site": entry["site"], "method": entry["method"],
                              "rep": int(entry.get("rep", 0)), "metric": m, "value": float(block[m])})
     for (site, rep), methods in pair_poses(results).items():
-        if "EEG" not in methods or "MRI" not in methods:
-            continue
         for m, v in paired_metrics(methods["EEG"], methods["MRI"]).items():
             rows.append({"subject": subject, "site": site, "method": "EEG-MRI", "rep": rep,
                          "metric": m, "value": float(v)})

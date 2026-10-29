@@ -35,6 +35,10 @@ COIL_FILE = os.environ.get("TMSNAV_COIL_FILE",
 # rate of change of coil current, A/s. 1e6 is 1 A/us, the simnibs default, and
 # the e field scales linearly with it so any intensity can be read off later
 DIDT = float(os.environ.get("TMSNAV_DIDT", 1e6))
+# also write |E| into the t1 voxel grid, subject_volumes/*_magnE.nii.gz. only the
+# viewer's slice view reads it and it is a few hundred MB per pose, so off unless
+# a job asks for it
+MAP_TO_VOL = os.environ.get("TMSNAV_MAP_TO_VOL", "0") == "1"
 # coil housing to scalp, mm. simnibs default, used when a pose is built from a
 # scalp point rather than a recorded matrix
 COIL_SKIN_DISTANCE_MM = float(os.environ.get("TMSNAV_COIL_SKIN_DISTANCE_MM", 4.0))
@@ -66,7 +70,7 @@ BRAINSIGHT_ROOT = _env_path("TMSNAV_BRAINSIGHT_ROOT", ROOT / "saves" / "brainsig
 # the r01's own fmri targets, one row per subject per site. see the template at
 # efield/fmri_targets_example.csv. this is the file that makes the e field
 # numbers mean "field delivered to the intended target" rather than "field
-# delivered under the coil", so without it run_efield falls back and says so
+# delivered under the coil", so a site with no row in it is not simulated
 FMRI_TARGETS = _env_path("TMSNAV_FMRI_TARGETS", ROOT / "saves" / "fmri_targets.csv")
 
 # an fmri target is already meant to be in cortex, so snapping it to the nearest

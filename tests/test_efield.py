@@ -20,16 +20,11 @@ from efield.headmodel import charm_command, find_m2m  # noqa: E402
 from efield.job import Job, runner_command  # noqa: E402
 from efield.metrics import dice, long_rows, paired_metrics  # noqa: E402
 from efield.poses import CoilPose, displacement_mm, is_rotation, orientation_deg, tilt_deg  # noqa: E402
-from efield.roi import (  # noqa: E402
-    RoiSpec,
-    load_target_table,
-    roi_under_pose,
-    rois_for_poses,
-    rois_for_subject,
-)
+from efield.roi import RoiSpec, load_target_table, rois_for_subject  # noqa: E402
 from efield.runner_simnibs import roi_metrics, snap_to_nodes, sphere_mask  # noqa: E402
 from src.stats import rotation_about  # noqa: E402
 from src.targets import Target  # noqa: E402
+import run_efield  # noqa: E402
 
 ERNIE = Path(r"C:\Users\alizr\Documents\.TMSResearch\Sample Datasets\Ernie\m2m_ernie")
 
@@ -110,27 +105,21 @@ def test_brainsight_fixture_round_trip():
 
 def test_job_json_round_trip():
     poses = [_pose(name="p1", site="F4", method="MRI", rep=1), _pose(name="p2", site="F4", method="EEG", rep=1)]
-    rois = rois_for_poses(poses)
-    assert len(rois) == 1 and rois[0].reference_method == "MRI" and rois[0].reference_pose == "p1"
+    rois = [RoiSpec(kind="fmri_target", centre=[36.0, 35.0, 29.4], site="F4")]
     with tempfile.TemporaryDirectory() as tmp:
         job = Job(subject="T9", m2m=str(Path(tmp) / "m2m_T9"), poses=poses, rois=rois, out_dir=tmp)
         path = job.write_json(Path(tmp) / "job.json")
         back = Job.read_json(path)
     assert back.subject == "T9" and len(back.poses) == 2 and len(back.rois) == 1
     assert back.coil_file == config.COIL_FILE and back.didt == config.DIDT
+    assert back.map_to_vol == config.MAP_TO_VOL
+    with tempfile.TemporaryDirectory() as tmp:
+        vol = Job(subject="T9", m2m=tmp, poses=poses, rois=rois, out_dir=tmp, map_to_vol=True)
+        assert Job.read_json(vol.write_json(Path(tmp) / "job.json")).map_to_vol is True
     assert np.allclose(back.poses[0].matsimnibs(), poses[0].matsimnibs(), atol=1e-5)
     assert back.rois[0].to_dict() == rois[0].to_dict()
     cmd = runner_command(path)
     assert cmd[0] == str(config.SIMNIBS_PYTHON) and cmd[-1] == "--dry-run" and cmd[1].endswith("runner_simnibs.py")
-
-
-def test_roi_seed_is_below_the_coil():
-    p = _pose(name="ref", site="F4", method="MRI", rep=1)
-    roi = roi_under_pose(p)
-    seed = np.array(roi.centre)
-    assert abs(np.linalg.norm(seed - p.centre) - roi.depth_mm) < 1e-9
-    assert np.dot(seed - p.centre, p.zdir) > 0
-    assert RoiSpec.from_dict(roi.to_dict()).name == roi.name
 
 
 def test_post_processing_on_fake_arrays():
@@ -206,17 +195,17 @@ def test_runner_dry_run_on_ernie():
             if cells[-1] == "F4":
                 f4 = np.array([float(v) for v in cells[1:4]])
     assert f4 is not None
-    n_out = f4 / np.linalg.norm(f4)   # radial, good enough since the runner snaps to skin
+    n_out = f4 / np.linalg.norm(f4)   # radial, close enough to the skin normal at f4
     mri = CoilPose.from_scalp_point(f4, n_out, [0, -1, 0], name="sub-ernie_MRI_F4_POSE_REP1",
                                     site="F4", method="MRI", rep=1)
     eeg = CoilPose.from_scalp_point(f4 + np.array([3.0, 0, 0]), n_out, [0.1, -1, 0],
                                     name="sub-ernie_EEGCAP_F4_POSE_REP1", site="F4", method="EEG", rep=1)
-    rois = rois_for_poses([mri, eeg])
-    assert len(rois) == 1
+    # a target 15 mm in from the electrode, about where the cortex is under f4
+    rois = [RoiSpec(kind="fmri_target", centre=(f4 - 15.0 * n_out).tolist(), site="F4")]
 
     tmp = Path(tempfile.mkdtemp(prefix="efield_test_"))
     job = Job(subject="ernie", m2m=str(ERNIE), poses=[mri, eeg], rois=rois, out_dir=str(tmp / "sim"),
-              snap_to_skin=True, poses_source="test")
+              poses_source="test")
     path = job.write_json(tmp / "job.json")
     cmd = runner_command(path, dry_run=True)
     assert "--dry-run" in cmd
@@ -274,8 +263,8 @@ S01,F4,38.5,34.0,32.4,mni,
             raise AssertionError(f"a row with a bad {why} was accepted")
 
 
-def test_roi_prefers_the_fmri_target():
-    """With a target the roi sits on it. Without one it falls back and says so."""
+def test_roi_is_the_r01_target():
+    """With a target the roi sits on it. Without one the site gets no roi at all."""
 
     t = Target("R-DLPFC", "F4", "#ff7f0e", None,
                np.array([40.0, 84.0, 66.0]), np.array([0.52, 0.53, 0.67]))
@@ -283,26 +272,30 @@ def test_roi_prefers_the_fmri_target():
 
     # supplied: the roi is the target itself, not anything derived from the coil
     table = {("S01", "F4"): {"coords": [36.0, 35.0, 29.4], "space": "subject", "note": ""}}
-    rois, guessed = rois_for_subject("S01", poses, table=table)
-    assert guessed == [] and len(rois) == 1
+    rois, missing = rois_for_subject("S01", poses, table=table)
+    assert missing == [] and len(rois) == 1
     roi = rois[0]
-    assert roi.kind == "fmri_target" and not roi.is_fallback
+    assert roi.kind == "fmri_target"
     assert roi.centre == [36.0, 35.0, 29.4]
     assert roi.reference_method == "fMRI"
+    assert RoiSpec.from_dict(roi.to_dict()).to_dict() == roi.to_dict()
 
     # an mni target keeps its coordinate for the runner to map
     table = {("S01", "F4"): {"coords": [38.0, 34.0, 32.0], "space": "mni", "note": ""}}
     roi = rois_for_subject("S01", poses, table=table)[0][0]
     assert roi.kind == "mni_sphere" and roi.mni == [38.0, 34.0, 32.0]
 
-    # nothing supplied: the fallback is used, is flagged, and is NOT the target
-    rois, guessed = rois_for_subject("S01", poses, table={})
-    assert guessed == ["F4"]
-    roi = rois[0]
-    assert roi.is_fallback and roi.kind == "sphere_under_coil"
-    assert "no fmri target" in roi.extra.get("fallback", "")
-    # it sits below the scalp contact, down the coil normal
-    assert roi.centre[2] < float(t.contact[2])
+    # nothing supplied: no roi, and the site is reported missing
+    rois, missing = rois_for_subject("S01", poses, table={})
+    assert rois == [] and missing == ["F4"]
+
+    # the old guess under the coil is not a kind any more
+    try:
+        RoiSpec(kind="sphere_under_coil", centre=[0.0, 0.0, 0.0], site="F4")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("sphere_under_coil was accepted")
 
     # a spec that claims a kind it has no coordinate for is refused
     for kind, kw in (("fmri_target", {}), ("mni_sphere", {})):
@@ -313,16 +306,172 @@ def test_roi_prefers_the_fmri_target():
         raise AssertionError(f"{kind} with no coordinate was accepted")
 
 
+def test_poses_come_from_the_exports():
+    """Every subject in the exports, sma and f4 only, an LPS file left out."""
+
+    def poses_for(sub, sites):
+        out = []
+        for site in sites:
+            for method in ("MRI", "EEG"):
+                c = np.array([40.0, 80.0 if site == "F4" else 20.0, 90.0])
+                out.append(CoilPose(centre=c, ydir=[0.0, -1.0, 0.0], zdir=[-0.3, -0.4, -0.85],
+                                    name=make_name(sub, method, site, 1), site=site,
+                                    method=method, rep=1))
+        return out
+
+    with tempfile.TemporaryDirectory() as tmp:
+        write_fixture(Path(tmp) / "sub-001_coil_pose_samples.txt", poses_for("001", ("SMA", "F4", "C3")))
+        write_fixture(Path(tmp) / "sub-002_coil_pose_samples.txt", poses_for("002", ("F4",)))
+        write_fixture(Path(tmp) / "sub-003_coil_pose_samples.txt", poses_for("003", ("F4",)),
+                      coord_sys="Brainsight")
+        by_subject, sources = run_efield.load_poses(tmp)
+
+    assert sorted(by_subject) == ["sub-001", "sub-002"], "the LPS export must not be used"
+    assert sorted(p.key() for p in by_subject["sub-001"]) == [
+        ("F4", "EEG", 1), ("F4", "MRI", 1), ("SMA", "EEG", 1), ("SMA", "MRI", 1)]
+    assert len(by_subject["sub-002"]) == 2
+    assert sources["sub-001"] == ["sub-001_coil_pose_samples.txt"]
+    assert run_efield.subject_id("001") == run_efield.subject_id("sub-001") == "sub-001"
+
+    # with a target for sma only, f4 is reported and gets no roi
+    table = {("sub-001", "SMA"): {"coords": [0.0, -2.0, 60.0], "space": "subject", "note": ""}}
+    rois, missing = rois_for_subject("sub-001", by_subject["sub-001"], table=table)
+    assert [r.site for r in rois] == ["SMA"] and missing == ["F4"]
+
+
+def test_one_mri_rep_pairs_every_eeg_rep():
+    """The aim 1 pairing rule: a single mri placement is compared with each eeg rep."""
+
+    def block(mean):
+        return {"mean_E_magn": mean, "peak_E_magn": mean * 1.5, "max_abs_E_normal": mean * 0.7,
+                "E_magn_at_centre": mean, "supra_nodes": [1, 2, 3]}
+
+    results = {"subject": "sub-001", "poses": [
+        {"name": "m1", "site": "F4", "method": "MRI", "rep": 1, "rois": {"F4_t": block(100.0)}},
+        {"name": "e1", "site": "F4", "method": "EEG", "rep": 1, "rois": {"F4_t": block(90.0)}},
+        {"name": "e2", "site": "F4", "method": "EEG", "rep": 2, "rois": {"F4_t": block(80.0)}},
+        # sma has two of each, so rep 2 goes with rep 2
+        {"name": "m1", "site": "SMA", "method": "MRI", "rep": 1, "rois": {"SMA_t": block(100.0)}},
+        {"name": "m2", "site": "SMA", "method": "MRI", "rep": 2, "rois": {"SMA_t": block(50.0)}},
+        {"name": "e1", "site": "SMA", "method": "EEG", "rep": 1, "rois": {"SMA_t": block(100.0)}},
+        {"name": "e2", "site": "SMA", "method": "EEG", "rep": 2, "rois": {"SMA_t": block(100.0)}},
+    ]}
+    pct = {(r["site"], r["rep"]): r["value"] for r in long_rows(results) if r["metric"] == "pct_diff_mean_roi"}
+    assert set(pct) == {("F4", 1), ("F4", 2), ("SMA", 1), ("SMA", 2)}
+    assert abs(pct[("F4", 1)] + 10.0) < 1e-9 and abs(pct[("F4", 2)] + 20.0) < 1e-9
+    assert abs(pct[("SMA", 1)]) < 1e-9 and abs(pct[("SMA", 2)] - 100.0) < 1e-9
+
+
+def test_nearest_values_keep_the_field():
+    from efield.export_web import nearest_values
+
+    rng = np.random.default_rng(3)
+    src = rng.normal(size=(500, 3)) * 40.0
+    e = rng.random(500)
+    # a subset of the original nodes, nudged less than half the closest spacing
+    keep = np.arange(0, 500, 7)
+    dst = src[keep] + 1e-4
+    out = nearest_values(src, e, dst)
+    assert np.array_equal(out, e[keep])
+    assert out.max() == e[keep].max()
+
+
+def _surface_npz(path, scale=1.0):
+    # an octahedron is enough of a closed surface for the decimation to pass through
+    nodes = np.array([[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]], float) * 50.0
+    tri = np.array([[0, 2, 4], [2, 1, 4], [1, 3, 4], [3, 0, 4], [2, 0, 5], [1, 2, 5], [3, 1, 5], [0, 3, 5]])
+    e = np.arange(6, dtype=float) * scale
+    np.savez(path, nodes=nodes, triangles=tri, E_magn=e, E_normal=-e)
+    return e
+
+
+def test_export_cortex_writes_one_field_per_pose():
+    from efield.export_web import export_cortex
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        e1 = _surface_npz(tmp / "a.npz")
+        e2 = _surface_npz(tmp / "b.npz", scale=2.0)
+        out = export_cortex([tmp / "a.npz", tmp / "b.npz"], ["a", "b"], tmp / "web", faces=8)
+        assert (tmp / "web" / "cortex.ply").exists()
+        n = out["n_vertices"]
+        f1 = np.fromfile(tmp / "web" / "efield_a.f32", dtype="<f4")
+        f2 = np.fromfile(tmp / "web" / "efield_b.f32", dtype="<f4")
+    assert n == 6 and len(f1) == n and len(f2) == n
+    assert sorted(f1.tolist()) == sorted(e1.tolist()) and np.allclose(f2, 2.0 * f1)
+    assert out["poses"]["b"]["peak"] == e2.max()
+
+
+def test_export_volumes_grid_and_scale():
+    import nibabel as nib
+    from efield.export_web import export_volumes
+
+    shape = (40, 44, 36)
+    aff = np.array([[1.0, 0, 0, -20], [0, 1.0, 0, -22], [0, 0, 1.0, -18], [0, 0, 0, 1]])
+    lab = np.zeros(shape, np.uint8)
+    lab[5:35, 6:38, 4:32] = 5                    # scalp
+    lab[10:30, 12:32, 9:27] = 2                  # grey matter inside it
+    t1 = (lab * 20).astype(np.float32)
+    field = np.where(lab == 2, 0.8, 1.5).astype(np.float32)     # higher in the scalp, masked out
+    field[lab == 0] = 0
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        for name, data in (("t1", t1), ("lab", lab), ("e", field)):
+            nib.save(nib.Nifti1Image(data, aff), str(tmp / f"{name}.nii.gz"))
+        vol = export_volumes(tmp / "t1.nii.gz", tmp / "lab.nii.gz", [tmp / "e.nii.gz"], ["p"],
+                             tmp / "web", color_max=1.0, step_mm=2.0)
+        nx, ny, nz = vol["dims"]
+        raw_t1 = (tmp / "web" / "t1.u8").read_bytes()
+        raw_e = np.frombuffer((tmp / "web" / "field_p.u8").read_bytes(), np.uint8)
+    assert len(raw_t1) == nx * ny * nz and len(raw_e) == nx * ny * nz
+    A = np.asarray(vol["affine"])
+    assert np.allclose(np.sqrt((A[:3, :3] ** 2).sum(axis=0)), 2.0)
+    # x fastest: the voxel at grid (i, j, k) is byte i + nx * (j + ny * k)
+    e = raw_e.reshape(nz, ny, nx).transpose(2, 1, 0)
+    # the grey matter centre, mapped back through the affine, holds 0.8 V/m within one step
+    centre = np.linalg.inv(A) @ np.array([0.0, 0.0, 0.0, 1.0])
+    i, j, k = np.rint(centre[:3]).astype(int)
+    assert abs(e[i, j, k] * vol["field_step"] - 0.8) <= vol["field_step"]
+    # nothing outside the brain, though the scalp had more field
+    assert e.max() * vol["field_step"] <= 0.8 + vol["field_step"]
+
+
+def test_registry_has_efield_only_with_a_manifest():
+    from src.export_web import write_registry
+
+    with tempfile.TemporaryDirectory() as tmp:
+        data = Path(tmp) / "data"
+        for s in ("A", "B"):
+            (data / s).mkdir(parents=True)
+            (data / s / "markers.json").write_text("{}")
+        (data / "A" / "efield").mkdir()
+        manifest = {"cortex": {"file": "cortex.ply"}, "volume": {"t1": "t1.u8"},
+                    "poses": [{"surface": "efield_p.f32", "volume": "field_p.u8"}]}
+        (data / "A" / "efield" / "manifest.json").write_text(json.dumps(manifest))
+        path, subjects = write_registry(data, Path(tmp) / "reg.js")
+        text = path.read_text()
+    assert subjects == ["A", "B"]
+    assert 'import S0_EFIELD from "./data/A/efield/manifest.json";' in text
+    for fn in ("cortex.ply", "t1.u8", "efield_p.f32", "field_p.u8"):
+        assert f'new URL("./data/A/efield/{fn}", import.meta.url)' in text
+    assert "S1_EFIELD" not in text and "efield: null" in text
+
+
 TESTS = [
     test_matsimnibs_round_trip,
     test_orientation_of_known_rotation,
     test_from_aim1_target_points_into_head,
     test_brainsight_fixture_round_trip,
     test_job_json_round_trip,
-    test_roi_seed_is_below_the_coil,
     test_fmri_target_table,
-    test_roi_prefers_the_fmri_target,
+    test_roi_is_the_r01_target,
+    test_poses_come_from_the_exports,
+    test_one_mri_rep_pairs_every_eeg_rep,
     test_post_processing_on_fake_arrays,
+    test_nearest_values_keep_the_field,
+    test_export_cortex_writes_one_field_per_pose,
+    test_export_volumes_grid_and_scale,
+    test_registry_has_efield_only_with_a_manifest,
     test_headmodel_finds_ernie,
     test_runner_dry_run_on_ernie,
 ]

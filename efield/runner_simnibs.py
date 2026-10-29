@@ -202,6 +202,7 @@ def build_session(job, coil_path):
     S.pathfem = str(job["out_dir"])
     S.fields = job.get("fields", "eE")
     S.map_to_surf = bool(job.get("map_to_surf", True))
+    S.map_to_vol = bool(job.get("map_to_vol", False))
     S.open_in_gmsh = False
     tms = S.add_tmslist()
     tms.fnamecoil = coil_path
@@ -226,10 +227,20 @@ def find_overlay(out_dir, index):
     return hits[0] if hits else None
 
 
+def find_volume(out_dir, index):
+    """The |E| nifti for pose index (1 based), written when map_to_vol is on."""
+
+    pat = os.path.join(str(out_dir), "subject_volumes", f"*_TMS_1-{index:04d}_*magnE.nii.gz")
+    hits = sorted(glob.glob(pat))
+    return hits[0] if hits else None
+
+
 def read_overlay(path):
     m = mesh_io.read_msh(path)
+    tri = m.elm.node_number_list[m.elm.elm_type == 2][:, :3] - 1
     return {
         "nodes": m.nodes.node_coord,
+        "triangles": np.asarray(tri, dtype=np.int32),
         "areas": np.asarray(m.nodes_areas().value, dtype=float).squeeze(),
         "E_magn": np.asarray(m.field[FIELD_MAGN].value, dtype=float).squeeze(),
         "E_normal": np.asarray(m.field[FIELD_NORMAL].value, dtype=float).squeeze(),
@@ -281,7 +292,7 @@ def main(argv=None):
         problems.append(f"coil file not found: {job['coil_file']}")
     else:
         print(f"coil    {coil_path}")
-    print(f"didt    {job.get('didt', 1e6):g} A/s   fields {job.get('fields', 'eE')}   map_to_surf {job.get('map_to_surf', True)}")
+    print(f"didt    {job.get('didt', 1e6):g} A/s   fields {job.get('fields', 'eE')}   map_to_surf {job.get('map_to_surf', True)}   map_to_vol {job.get('map_to_vol', False)}")
 
     # --- the poses
     mesh = None
@@ -391,8 +402,15 @@ def main(argv=None):
             print(f"  pose {p['name']}: no overlay found for index {i}")
             continue
         data = read_overlay(ov)
+        # the surface and its fields as plain arrays, so efield/export_web.py can
+        # build the viewer files from the project python without simnibs
+        web = job_dir / "web" / f"{p['name']}.npz"
+        web.parent.mkdir(parents=True, exist_ok=True)
+        np.savez_compressed(web, nodes=data["nodes"], triangles=data["triangles"],
+                            E_magn=data["E_magn"], E_normal=data["E_normal"])
         entry = {"index": i, "name": p["name"], "site": p.get("site"), "method": p.get("method"),
-                 "rep": p.get("rep"), "overlay": ov, "rois": {}}
+                 "rep": p.get("rep"), "matsimnibs": p["matsimnibs"], "overlay": ov, "surface_npz": str(web),
+                 "volume": find_volume(job["out_dir"], i), "rois": {}}
         for name, real in rois.items():
             if real["mask"].shape[0] != data["E_magn"].shape[0]:
                 raise RuntimeError(f"roi {name} has {real['mask'].shape[0]} nodes, overlay {ov} has "
@@ -400,6 +418,7 @@ def main(argv=None):
             entry["rois"][name] = roi_metrics(data["E_magn"], data["E_normal"], data["areas"],
                                               real["mask"], real["centre_node"], supra_frac,
                                               supra_abs=supra_abs)
+            entry["rois"][name]["centre"] = [float(x) for x in real["centre"]]
         results["poses"].append(entry)
         print(f"  pose {p['name']}: " + ", ".join(
             f"{k} mean {v['mean_E_magn']:.1f} peak {v['peak_E_magn']:.1f} V/m" for k, v in entry["rois"].items()))
